@@ -31,6 +31,7 @@ impl<T: QuerySource, U> UpdateStatement<T, U, SetNotCalled> {
             set_clause: SetClause::Immediate,
             values: SetNotCalled,
             returning: NoReturningClause,
+            schema_name: None,
         }
     }
 
@@ -51,6 +52,7 @@ impl<T: QuerySource, U> UpdateStatement<T, U, SetNotCalled> {
             set_clause: <V as AsChangeset>::SET_CLAUSE,
             values: values.as_changeset(),
             returning: self.returning,
+            schema_name: self.schema_name,
         }
     }
 }
@@ -68,6 +70,7 @@ pub struct UpdateStatement<T: QuerySource, U, V = SetNotCalled, Ret = NoReturnin
     set_clause: SetClause,
     values: V,
     returning: Ret,
+    schema_name: Option<String>,
 }
 
 /// An `UPDATE` statement with a boxed `WHERE` clause.
@@ -228,6 +231,21 @@ impl<T: QuerySource, U, V, Ret> UpdateStatement<T, U, V, Ret> {
     {
         BoxedCloneDsl::internal_into_boxed_clone(self)
     }
+
+    pub(crate) fn set_schema_name(self, schema_name: &String) -> Self {
+        UpdateStatement {
+            from_clause: self.from_clause,
+            where_clause: self.where_clause,
+            set_clause: self.set_clause,
+            values: self.values,
+            returning: self.returning,
+            schema_name: Some(schema_name.to_owned()),
+        }
+    }
+
+    pub fn schema_name(self, schema_name: &String) -> Self {
+        self.set_schema_name(&schema_name)
+    }
 }
 
 impl<T, U, V, Ret, Predicate> FilterDsl<Predicate> for UpdateStatement<T, U, V, Ret>
@@ -245,6 +263,7 @@ where
             set_clause: self.set_clause,
             values: self.values,
             returning: self.returning,
+            schema_name: self.schema_name,
         }
     }
 }
@@ -263,6 +282,7 @@ where
             set_clause: self.set_clause,
             values: self.values,
             returning: self.returning,
+            schema_name: self.schema_name,
         }
     }
 }
@@ -281,6 +301,7 @@ where
             set_clause: self.set_clause,
             values: self.values,
             returning: self.returning,
+            schema_name: self.schema_name,
         }
     }
 }
@@ -301,6 +322,10 @@ where
 
         out.unsafe_to_cache_prepared();
         out.push_sql("UPDATE ");
+        if let Some(schema) = &self.schema_name {
+            out.push_identifier(schema)?;
+            out.push_sql(".");
+        }
         self.from_clause.walk_ast(out.reborrow())?;
         self.set_clause.walk_ast(out.reborrow())?;
         self.values.walk_ast(out.reborrow())?;
@@ -413,6 +438,7 @@ impl<T: QuerySource, U, V> UpdateStatement<T, U, V, NoReturningClause> {
             set_clause: self.set_clause,
             values: self.values,
             returning: ReturningClause(returns),
+            schema_name: self.schema_name,
         }
     }
 }
