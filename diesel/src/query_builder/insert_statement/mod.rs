@@ -153,7 +153,7 @@ where
     feature = "i-implement-a-third-party-backend-and-opt-into-breaking-changes",
     public_fields(operator, target, records, returning)
 )]
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Clone)]
 #[must_use = "Queries are only executed when calling `load`, `get_result` or similar."]
 pub struct InsertStatement<T: QuerySource, U, Op = Insert, Ret = NoReturningClause> {
     /// The operator used by this InsertStatement
@@ -167,6 +167,8 @@ pub struct InsertStatement<T: QuerySource, U, Op = Insert, Ret = NoReturningClau
     /// An optional returning clause
     returning: Ret,
     into_clause: T::FromClause,
+    /// The schema the query runs in
+    schema_name: Option<String>,
 }
 
 impl<T, U, Op, Ret> QueryId for InsertStatement<T, U, Op, Ret>
@@ -196,6 +198,7 @@ impl<T: QuerySource, U, Op, Ret> InsertStatement<T, U, Op, Ret> {
             target,
             records,
             returning,
+            schema_name: None,
         }
     }
 
@@ -204,6 +207,21 @@ impl<T: QuerySource, U, Op, Ret> InsertStatement<T, U, Op, Ret> {
         F: FnOnce(U) -> V,
     {
         InsertStatement::new(self.target, f(self.records), self.operator, self.returning)
+    }
+
+    pub(crate) fn set_schema_name(self, schema_name: &String) -> Self {
+        InsertStatement {
+            into_clause: self.into_clause,
+            operator: self.operator,
+            target: self.target,
+            records: self.records,
+            returning: self.returning,
+            schema_name: Some(schema_name.to_owned()),
+        }
+    }
+
+    pub fn schema_name(self, schema_name: &String) -> Self {
+        self.set_schema_name(&schema_name)
     }
 }
 
@@ -239,6 +257,7 @@ pub(super) fn walk_ast_intern<'b, T, U, Op, Ret, DB>(
     into_clause: &'b T::FromClause,
     operator: &'b Op,
     returning: &'b Ret,
+    schema_name: Option<&'b str>,
 ) -> QueryResult<()>
 where
     DB: Backend + DieselReserveSpecialization,
@@ -250,6 +269,9 @@ where
 {
     if records.rows_to_insert() == Some(0) {
         out.push_sql("SELECT 1 FROM ");
+        if let Some(schema_name) = schema_name {
+            out.push_sql(&format!("{schema_name}."));
+        }
         into_clause.walk_ast(out.reborrow())?;
         out.push_sql(" WHERE 1=0");
         return Ok(());
@@ -257,6 +279,9 @@ where
 
     operator.walk_ast(out.reborrow())?;
     out.push_sql(" INTO ");
+    if let Some(schema_name) = schema_name {
+        out.push_sql(&format!("{schema_name}."));
+    }
     into_clause.walk_ast(out.reborrow())?;
     out.push_sql(" ");
     records.walk_ast(out.reborrow())?;
@@ -280,6 +305,7 @@ where
             &self.into_clause,
             &self.operator,
             &self.returning,
+            self.schema_name.as_deref(),
         )
     }
 }

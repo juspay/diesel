@@ -248,7 +248,7 @@ mod tests {
 
         let expected = vec![(1, String::from("Sean")), (2, String::from("Tess"))];
 
-        let row_iter = conn.load(query).unwrap();
+        let row_iter = conn.load(&query).unwrap();
         for (row, expected) in row_iter.zip(&expected) {
             let row = row.unwrap();
 
@@ -262,7 +262,7 @@ mod tests {
         }
 
         {
-            let collected_rows = conn.load(query).unwrap().collect::<Vec<_>>();
+            let collected_rows = conn.load(&query).unwrap().collect::<Vec<_>>();
 
             for (row, expected) in collected_rows.iter().zip(&expected) {
                 let deserialized = row
@@ -279,7 +279,7 @@ mod tests {
             }
         }
 
-        let mut row_iter = conn.load(query).unwrap();
+        let mut row_iter = conn.load(&query).unwrap();
 
         let first_row = row_iter.next().unwrap().unwrap();
         let first_fields = (first_row.get(0).unwrap(), first_row.get(1).unwrap());

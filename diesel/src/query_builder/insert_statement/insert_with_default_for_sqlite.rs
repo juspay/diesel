@@ -119,6 +119,7 @@ where
             records,
             returning,
             into_clause,
+            schema_name,
         } = self.query;
         let records = unsafe {
             // SAFETY:
@@ -140,6 +141,7 @@ where
             into_clause,
             operator,
             returning,
+            schema_name.as_deref(),
         )
         .map_err(|_| fmt::Error)?;
         let mut query_builder = SqliteQueryBuilder::default();
@@ -151,6 +153,7 @@ where
             into_clause,
             operator,
             returning,
+            schema_name.as_deref(),
         )
         .map_err(|_| fmt::Error)?;
         let query = query_builder.finish();
@@ -662,6 +665,7 @@ where
                     },
                     returning: query.returning,
                     into_clause: query.into_clause,
+                    schema_name: query.schema_name.clone(),
                 };
 
                 let result = stmt
@@ -735,6 +739,7 @@ where
                     },
                     returning: query.returning,
                     into_clause: query.into_clause,
+                    schema_name: query.schema_name.clone(),
                 };
 
                 let result = stmt
@@ -851,6 +856,7 @@ where
             target: query.target,
             returning: query.returning,
             into_clause: query.into_clause,
+            schema_name: query.schema_name,
         };
         query.execute(conn)
     }
@@ -885,6 +891,7 @@ where
             },
             returning: query.returning,
             into_clause: query.into_clause,
+            schema_name: query.schema_name,
         };
         query.execute(conn)
     }
@@ -918,6 +925,7 @@ where
             target: query.target,
             returning: query.returning,
             into_clause: query.into_clause,
+            schema_name: query.schema_name,
         };
 
         query.internal_load(conn)
@@ -957,6 +965,7 @@ where
             target: query.target,
             returning: query.returning,
             into_clause: query.into_clause,
+            schema_name: query.schema_name,
         };
 
         query.internal_load(conn)
@@ -1003,6 +1012,7 @@ where
             },
             returning: query.returning,
             into_clause: query.into_clause,
+            schema_name: query.schema_name,
         };
 
         query.internal_load(conn)
@@ -1052,6 +1062,7 @@ where
             },
             returning: query.returning,
             into_clause: query.into_clause,
+            schema_name: query.schema_name,
         };
 
         query.internal_load(conn)
