@@ -18,7 +18,7 @@ quote = "1"
 syn = { version = "3", features = ["extra-traits", "full", "derive", "parsing", "visit"] }
 
 [dev-dependencies]
-diesel = { path = "../diesel" }
+diesel = { path = "../diesel", package = "juspay_diesel" }
 
 [lints]
 workspace = true
