@@ -63,6 +63,7 @@ fd-lock = "4.0.2"
 [dependencies.diesel]
 version = "~2.3.0"
 path = "../diesel"
+package = "juspay_diesel"
 default-features = false
 
 [dependencies.diesel_migrations]
