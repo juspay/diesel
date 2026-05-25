@@ -14,7 +14,7 @@ include.workspace = true
 rust-version.workspace = true
 
 [dependencies.diesel]
-version = "~2.2.0"
+version = "~2.3.0"
 path = "../diesel/"
 package = "juspay_diesel"
 default-features = false
