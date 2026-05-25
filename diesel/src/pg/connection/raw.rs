@@ -15,6 +15,108 @@ use crate::result::*;
 use super::result::PgResult;
 use crate::pg::PgNotification;
 
+/// Builds connection parameters from a database URL, injecting `timezone=UTC`
+/// and `client_encoding=UTF8` as connection parameters (via startup packet)
+/// instead of using post-connection SET commands.
+///
+/// This prevents AWS RDS Proxy from pinning connections, because startup
+/// parameters are not treated as session-mutating operations — only explicit
+/// SET commands issued after connection cause pinning.
+///
+/// Uses `PQconninfoParse` (libpq's own parser) so that all valid connection
+/// string formats (URI, key=value, etc.) are handled correctly without fragile
+/// string manipulation.
+fn build_connection_params(database_url: &str) -> ConnectionResult<(Vec<CString>, Vec<CString>)> {
+    let connection_string = CString::new(database_url)?;
+
+    let mut errmsg: *mut libc::c_char = ptr::null_mut();
+    let conninfo = unsafe { PQconninfoParse(connection_string.as_ptr(), &mut errmsg) };
+
+    if conninfo.is_null() {
+        let message = if !errmsg.is_null() {
+            let msg = unsafe { CStr::from_ptr(errmsg).to_string_lossy().into_owned() };
+            unsafe { pq_sys::PQfreemem(errmsg as *mut libc::c_void) };
+            msg
+        } else {
+            "Failed to parse connection string".to_string()
+        };
+        return Err(ConnectionError::BadConnection(message));
+    }
+
+    let mut keywords: Vec<CString> = Vec::new();
+    let mut values: Vec<CString> = Vec::new();
+    let mut has_client_encoding = false;
+    let mut has_timezone_in_options = false;
+    let mut options_idx: Option<usize> = None;
+
+    // Iterate through PQconninfoOption array (terminated by null keyword)
+    let mut opt = conninfo;
+    while !unsafe { (*opt).keyword }.is_null() {
+        let keyword_ptr = unsafe { (*opt).keyword };
+        let val_ptr = unsafe { (*opt).val };
+
+        let keyword = unsafe { CStr::from_ptr(keyword_ptr) }
+            .to_string_lossy()
+            .into_owned();
+
+        if !val_ptr.is_null() {
+            let val = unsafe { CStr::from_ptr(val_ptr) }
+                .to_string_lossy()
+                .into_owned();
+
+            // Track whether client_encoding is already explicitly set
+            if keyword == "client_encoding" {
+                has_client_encoding = true;
+            }
+
+            // Track whether timezone is already set via options
+            if keyword == "options" {
+                options_idx = Some(keywords.len());
+                if val.contains("timezone=") || val.contains("timezone =") {
+                    has_timezone_in_options = true;
+                }
+            }
+
+            keywords
+                .push(CString::new(keyword).map_err(|e| {
+                    ConnectionError::BadConnection(format!("Invalid keyword: {e}"))
+                })?);
+            values.push(
+                CString::new(val)
+                    .map_err(|e| ConnectionError::BadConnection(format!("Invalid value: {e}")))?,
+            );
+        }
+
+        opt = unsafe { opt.add(1) };
+    }
+
+    // Free the PQconninfoParse result
+    unsafe { PQconninfoFree(conninfo) };
+
+    // Inject client_encoding if not already set
+    if !has_client_encoding {
+        keywords.push(CString::new("client_encoding").expect("valid CString"));
+        values.push(CString::new("UTF8").expect("valid CString"));
+    }
+
+    // Inject timezone via options if not already set
+    if !has_timezone_in_options {
+        let timezone_opt = CString::new("-c timezone=UTC").expect("valid CString");
+        if let Some(idx) = options_idx {
+            // Append to existing options value
+            let existing_val = values[idx].to_string_lossy().into_owned();
+            let new_val = format!("{} {}", existing_val, timezone_opt.to_str().unwrap());
+            values[idx] = CString::new(new_val).expect("valid CString");
+        } else {
+            // Add new options parameter
+            keywords.push(CString::new("options").expect("valid CString"));
+            values.push(timezone_opt);
+        }
+    }
+
+    Ok((keywords, values))
+}
+
 #[allow(missing_debug_implementations, missing_copy_implementations)]
 pub(super) struct RawConnection {
     pub(super) internal_connection: NonNull<PGconn>,
@@ -22,8 +124,24 @@ pub(super) struct RawConnection {
 
 impl RawConnection {
     pub(super) fn establish(database_url: &str) -> ConnectionResult<Self> {
-        let connection_string = CString::new(database_url)?;
-        let connection_ptr = unsafe { PQconnectdb(connection_string.as_ptr()) };
+        let (keywords, values) = build_connection_params(database_url)?;
+
+        // Build null-terminated pointer arrays for PQconnectdbParams
+        let keyword_ptrs: Vec<*const libc::c_char> = keywords
+            .iter()
+            .map(|k| k.as_ptr())
+            .chain(std::iter::once(ptr::null()))
+            .collect();
+        let value_ptrs: Vec<*const libc::c_char> = values
+            .iter()
+            .map(|v| v.as_ptr())
+            .chain(std::iter::once(ptr::null()))
+            .collect();
+
+        // expand_dbname = 0 because PQconninfoParse already expanded the
+        // connection string into individual parameters
+        let connection_ptr =
+            unsafe { PQconnectdbParams(keyword_ptrs.as_ptr(), value_ptrs.as_ptr(), 0) };
         let connection_status = unsafe { PQstatus(connection_ptr) };
 
         match connection_status {
