@@ -1,6 +1,6 @@
 [package]
 name = "juspay_diesel"
-version = "2.2.4"
+version = "2.3.1"
 license = "MIT OR Apache-2.0"
 description = "A safe, extensible ORM and Query Builder for PostgreSQL, SQLite, and MySQL"
 readme = "README.md"
@@ -81,6 +81,7 @@ i-implement-a-third-party-backend-and-opt-into-breaking-changes = []
 r2d2 = ["diesel_derives/r2d2", "dep:r2d2"]
 chrono = ["diesel_derives/chrono", "dep:chrono"]
 time = ["diesel_derives/time", "dep:time"]
+rds-proxy = []
 __with_asan_tests = [
     "libsqlite3-sys?/bundled",
     "libsqlite3-sys?/with-asan",

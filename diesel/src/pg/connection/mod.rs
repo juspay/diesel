@@ -540,8 +540,11 @@ impl PgConnection {
     }
 
     fn set_config_options(&mut self) -> QueryResult<()> {
-        crate::sql_query("SET TIME ZONE 'UTC'").execute(self)?;
-        crate::sql_query("SET CLIENT_ENCODING TO 'UTF8'").execute(self)?;
+        #[cfg(not(feature = "rds-proxy"))]
+        {
+            crate::sql_query("SET TIME ZONE 'UTC'").execute(self)?;
+            crate::sql_query("SET CLIENT_ENCODING TO 'UTF8'").execute(self)?;
+        }
         self.connection_and_transaction_manager
             .raw_connection
             .set_notice_processor(noop_notice_processor);
