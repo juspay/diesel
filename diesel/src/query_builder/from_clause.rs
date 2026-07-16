@@ -76,7 +76,10 @@ where
 {
     type QueryId = F::QueryId;
 
-    const HAS_STATIC_QUERY_ID: bool = F::HAS_STATIC_QUERY_ID;
+    // `schema_name` is only known at runtime, so the type alone does not
+    // determine the generated SQL. Claiming a static query id here would let
+    // the statement cache serve one schema's prepared statement to another.
+    const HAS_STATIC_QUERY_ID: bool = false;
 }
 
 impl<F> Clone for FromClause<F>

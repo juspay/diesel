@@ -135,18 +135,29 @@ mod tests {
         T::query_id()
     }
 
+    // A bare table still has a static id: it has no `FromClause`, so no
+    // `schema_name` can be attached to it. Once it is wrapped in a
+    // `FromClause` the query can carry a runtime schema, its SQL is no longer
+    // determined by its type alone, and it deliberately has no static id. The
+    // statement cache then keys on the generated SQL, as it already does for
+    // boxed queries.
     #[diesel_test_helper::test]
-    fn queries_with_no_dynamic_elements_have_a_static_id() {
+    fn queries_with_a_from_clause_have_no_static_id_because_the_schema_is_dynamic() {
         use self::users::dsl::*;
         assert!(query_id(users).is_some());
-        assert!(query_id(users.select(name)).is_some());
-        assert!(query_id(users.filter(name.eq("Sean"))).is_some());
+        assert!(query_id(users.select(name)).is_none());
+        assert!(query_id(users.filter(name.eq("Sean"))).is_none());
     }
 
     #[diesel_test_helper::test]
     fn queries_with_different_types_have_different_ids() {
-        let id1 = query_id(users::table.select(users::name));
-        let id2 = query_id(users::table.select(users::id));
+        // `query_id` is `None` for table-based queries (see above), so compare
+        // the underlying `QueryId` types, which still distinguish the queries.
+        fn query_id_type<T: QueryId>(_: T) -> TypeId {
+            TypeId::of::<T::QueryId>()
+        }
+        let id1 = query_id_type(users::table.select(users::name));
+        let id2 = query_id_type(users::table.select(users::id));
         assert_ne!(id1, id2);
     }
 

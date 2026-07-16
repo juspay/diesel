@@ -360,18 +360,247 @@ mod tests_pg {
 #[cfg(feature = "__sqlite-shared")]
 mod tests_sqlite {
 
-    use crate::connection::CacheSize;
+    use crate::connection::{CacheSize, SimpleConnection};
     use crate::dsl::sql;
     use crate::query_dsl::RunQueryDsl;
     use crate::sql_types::Integer;
-    use crate::{Connection, ExpressionMethods, IntoSql, SqliteConnection};
+    use crate::{Connection, ExpressionMethods, IntoSql, QueryDsl, SqliteConnection};
 
     use super::testing_utils::{RecordCacheEvents, count_cache_calls};
+
+    crate::table! {
+        users {
+            id -> Integer,
+        }
+    }
 
     pub fn connection() -> SqliteConnection {
         let mut conn = SqliteConnection::establish(":memory:").unwrap();
         conn.set_instrumentation(RecordCacheEvents::default());
         conn
+    }
+
+    /// Two attached schemas, each with an empty `users` table.
+    fn connection_with_two_schemas() -> SqliteConnection {
+        let mut conn = connection();
+        conn.batch_execute(
+            "ATTACH DATABASE ':memory:' AS tenant_a; \
+             ATTACH DATABASE ':memory:' AS tenant_b; \
+             CREATE TABLE tenant_a.users (id INTEGER PRIMARY KEY); \
+             CREATE TABLE tenant_b.users (id INTEGER PRIMARY KEY);",
+        )
+        .unwrap();
+        conn
+    }
+
+    /// Rows present in `<schema>.users`. Reads via the schema-qualified SELECT
+    /// path, whose per-schema correctness is established by
+    /// `schema_qualified_queries_are_cached_per_schema`.
+    fn ids_in(conn: &mut SqliteConnection, schema: &str) -> Vec<i32> {
+        let schema = String::from(schema);
+        users::table
+            .select(users::id)
+            .schema_name(&schema)
+            .load(conn)
+            .unwrap()
+    }
+
+    /// The same query against two different schemas must not share a cached
+    /// prepared statement: the schema name is only known at runtime, so it
+    /// cannot take part in the type-level query id.
+    #[diesel_test_helper::test]
+    fn schema_qualified_queries_are_cached_per_schema() {
+        let connection = &mut connection();
+        // Two real schemas, each with a `users` table holding a distinguishable row.
+        connection
+            .batch_execute(
+                "ATTACH DATABASE ':memory:' AS tenant_a; \
+                 ATTACH DATABASE ':memory:' AS tenant_b; \
+                 CREATE TABLE tenant_a.users (id INTEGER PRIMARY KEY); \
+                 CREATE TABLE tenant_b.users (id INTEGER PRIMARY KEY); \
+                 INSERT INTO tenant_a.users (id) VALUES (1); \
+                 INSERT INTO tenant_b.users (id) VALUES (2);",
+            )
+            .unwrap();
+
+        let schema_a = String::from("tenant_a");
+        let schema_b = String::from("tenant_b");
+
+        assert_eq!(
+            Ok(1),
+            users::table
+                .select(users::id)
+                .schema_name(&schema_a)
+                .get_result(connection)
+        );
+        assert_eq!(1, count_cache_calls(connection));
+
+        // Same type, different schema: must re-prepare rather than reuse
+        // `tenant_a`'s statement and silently read the wrong schema.
+        assert_eq!(
+            Ok(2),
+            users::table
+                .select(users::id)
+                .schema_name(&schema_b)
+                .get_result(connection)
+        );
+        assert_eq!(2, count_cache_calls(connection));
+
+        // Repeating a schema still hits the cache rather than growing it.
+        assert_eq!(
+            Ok(1),
+            users::table
+                .select(users::id)
+                .schema_name(&schema_a)
+                .get_result(connection)
+        );
+        assert_eq!(2, count_cache_calls(connection));
+    }
+
+    /// An INSERT must land in the schema it names, not in whichever schema was
+    /// inserted into first on this connection.
+    #[diesel_test_helper::test]
+    fn schema_qualified_inserts_are_cached_per_schema() {
+        let connection = &mut connection_with_two_schemas();
+        let schema_a = String::from("tenant_a");
+        let schema_b = String::from("tenant_b");
+
+        crate::insert_into(users::table)
+            .values(users::id.eq(1))
+            .schema_name(&schema_a)
+            .execute(connection)
+            .unwrap();
+        assert_eq!(1, count_cache_calls(connection));
+
+        crate::insert_into(users::table)
+            .values(users::id.eq(2))
+            .schema_name(&schema_b)
+            .execute(connection)
+            .unwrap();
+        assert_eq!(2, count_cache_calls(connection));
+
+        // Each row landed in its own schema.
+        assert_eq!(vec![1], ids_in(connection, "tenant_a"));
+        assert_eq!(vec![2], ids_in(connection, "tenant_b"));
+    }
+
+    /// A DELETE must remove rows from the schema it names, not from whichever
+    /// schema was deleted from first on this connection.
+    #[diesel_test_helper::test]
+    fn schema_qualified_deletes_are_cached_per_schema() {
+        let connection = &mut connection_with_two_schemas();
+        connection
+            .batch_execute(
+                "INSERT INTO tenant_a.users (id) VALUES (1); \
+                 INSERT INTO tenant_b.users (id) VALUES (2);",
+            )
+            .unwrap();
+        let schema_a = String::from("tenant_a");
+        let schema_b = String::from("tenant_b");
+
+        assert_eq!(
+            Ok(1),
+            crate::delete(users::table)
+                .schema_name(&schema_a)
+                .execute(connection)
+        );
+        // tenant_b must be untouched by tenant_a's delete.
+        assert!(ids_in(connection, "tenant_a").is_empty());
+        assert_eq!(vec![2], ids_in(connection, "tenant_b"));
+
+        assert_eq!(
+            Ok(1),
+            crate::delete(users::table)
+                .schema_name(&schema_b)
+                .execute(connection)
+        );
+        assert!(ids_in(connection, "tenant_b").is_empty());
+    }
+
+    /// Queries that never call `.schema_name()` must still be cached and
+    /// reused. They no longer have a static query id, so they are keyed on
+    /// their SQL instead, but a repeated query must not re-prepare.
+    #[diesel_test_helper::test]
+    fn plain_table_queries_are_still_cached_and_reused() {
+        let connection = &mut connection();
+        connection
+            .batch_execute(
+                "CREATE TABLE users (id INTEGER PRIMARY KEY); \
+                 INSERT INTO users (id) VALUES (7);",
+            )
+            .unwrap();
+
+        assert_eq!(Ok(7), users::table.select(users::id).get_result(connection));
+        assert_eq!(1, count_cache_calls(connection));
+
+        // Second run must hit the cache rather than prepare a second statement.
+        assert_eq!(Ok(7), users::table.select(users::id).get_result(connection));
+        assert_eq!(1, count_cache_calls(connection));
+    }
+
+    /// Bind values are placeholders in the SQL, so queries differing only in
+    /// bind values must share one cached statement rather than growing the
+    /// cache per value.
+    #[diesel_test_helper::test]
+    fn plain_queries_with_different_bind_values_share_one_cached_statement() {
+        let connection = &mut connection();
+        connection
+            .batch_execute(
+                "CREATE TABLE users (id INTEGER PRIMARY KEY); \
+                 INSERT INTO users (id) VALUES (1), (2);",
+            )
+            .unwrap();
+
+        assert_eq!(
+            Ok(1),
+            users::table
+                .select(users::id)
+                .filter(users::id.eq(1))
+                .get_result(connection)
+        );
+        assert_eq!(1, count_cache_calls(connection));
+
+        assert_eq!(
+            Ok(2),
+            users::table
+                .select(users::id)
+                .filter(users::id.eq(2))
+                .get_result(connection)
+        );
+        assert_eq!(1, count_cache_calls(connection));
+    }
+
+    /// An unqualified query and a schema-qualified one target different tables
+    /// and must not share a cached statement in either direction.
+    #[diesel_test_helper::test]
+    fn unqualified_and_schema_qualified_queries_do_not_share_a_statement() {
+        let connection = &mut connection_with_two_schemas();
+        connection
+            .batch_execute(
+                "CREATE TABLE users (id INTEGER PRIMARY KEY); \
+                 INSERT INTO users (id) VALUES (9); \
+                 INSERT INTO tenant_a.users (id) VALUES (1);",
+            )
+            .unwrap();
+        let schema_a = String::from("tenant_a");
+
+        // Unqualified reads the default schema.
+        assert_eq!(Ok(9), users::table.select(users::id).get_result(connection));
+        assert_eq!(1, count_cache_calls(connection));
+
+        // Qualified reads tenant_a, and does not reuse the unqualified statement.
+        assert_eq!(
+            Ok(1),
+            users::table
+                .select(users::id)
+                .schema_name(&schema_a)
+                .get_result(connection)
+        );
+        assert_eq!(2, count_cache_calls(connection));
+
+        // ...and the unqualified query still reads the default schema afterwards.
+        assert_eq!(Ok(9), users::table.select(users::id).get_result(connection));
+        assert_eq!(2, count_cache_calls(connection));
     }
 
     #[diesel_test_helper::test]

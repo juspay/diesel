@@ -67,8 +67,9 @@ where
 {
     type QueryId = DeleteStatement<T, U::QueryId, Ret::QueryId>;
 
-    const HAS_STATIC_QUERY_ID: bool =
-        T::HAS_STATIC_QUERY_ID && U::HAS_STATIC_QUERY_ID && Ret::HAS_STATIC_QUERY_ID;
+    // Always false: `schema_name` is a runtime value, so the type does not
+    // determine the generated SQL. See `FromClause`'s `QueryId` impl.
+    const HAS_STATIC_QUERY_ID: bool = false;
 }
 
 /// A `DELETE` statement with a boxed `WHERE` clause

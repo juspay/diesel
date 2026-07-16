@@ -180,10 +180,9 @@ where
 {
     type QueryId = InsertStatement<T, U::QueryId, Op::QueryId, Ret::QueryId>;
 
-    const HAS_STATIC_QUERY_ID: bool = T::HAS_STATIC_QUERY_ID
-        && U::HAS_STATIC_QUERY_ID
-        && Op::HAS_STATIC_QUERY_ID
-        && Ret::HAS_STATIC_QUERY_ID;
+    // Always false: `schema_name` is a runtime value, so the type does not
+    // determine the generated SQL. See `FromClause`'s `QueryId` impl.
+    const HAS_STATIC_QUERY_ID: bool = false;
 }
 
 impl<T: QuerySource, U, Op, Ret> InsertStatement<T, U, Op, Ret> {
