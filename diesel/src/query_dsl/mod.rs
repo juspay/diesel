@@ -1439,6 +1439,24 @@ pub trait QueryDsl: Sized {
         methods::SelectNullableDsl::nullable(self)
     }
 
+    /// Run this query against the given schema.
+    ///
+    /// The table name is qualified with `schema_name` in the generated SQL, so
+    /// the query reads from `<schema_name>.<table>` rather than from the
+    /// connection's default schema. Use this when the schema is only known at
+    /// runtime, such as when one connection serves several tenants.
+    ///
+    /// Unlike a schema declared in `table!`, this is a runtime value and so is
+    /// not part of the query's type. Two queries that differ only by schema
+    /// have the same type, which is why such a query reports no static query id
+    /// and is cached by its SQL rather than by its type. Each schema therefore
+    /// gets its own prepared statement.
+    ///
+    /// ```ignore
+    /// // reads from `tenant_a.users` instead of the default schema
+    /// let tenant = String::from("tenant_a");
+    /// users.select(name).schema_name(&tenant).load::<String>(connection)?;
+    /// ```
     fn schema_name(self, schema_name: &String) -> SchameName<Self>
     where
         Self: methods::SchemaNameDsl,

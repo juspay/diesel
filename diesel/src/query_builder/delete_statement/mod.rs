@@ -201,12 +201,23 @@ impl<T: QuerySource, U> DeleteStatement<T, U, NoReturningClause> {
         BoxedDsl::internal_into_boxed(self)
     }
 
+    /// Run this delete against the given schema.
+    ///
+    /// The table name is qualified with `schema_name` in the generated SQL, so
+    /// `diesel::delete(users::table).schema_name(&s)` deletes from
+    /// `<s>.users` rather than from the connection's default schema. The schema
+    /// is a runtime value, which is why it is not part of the query's type.
+    ///
+    /// Because the SQL depends on a runtime value, such a query has no static
+    /// query id and is cached by its SQL instead. See [`QueryId`] for details.
+    ///
+    /// [`QueryId`]: crate::query_builder::QueryId
     pub fn schema_name(self, schema_name: &String) -> Self {
-      DeleteStatement {
-          from_clause: self.from_clause.set_schema_name(schema_name),
-          where_clause: self.where_clause,
-          returning: self.returning,
-      }
+        DeleteStatement {
+            from_clause: self.from_clause.set_schema_name(schema_name),
+            where_clause: self.where_clause,
+            returning: self.returning,
+        }
     }
 }
 

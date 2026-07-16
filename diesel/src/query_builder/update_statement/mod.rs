@@ -166,8 +166,18 @@ impl<T: QuerySource, U, V, Ret> UpdateStatement<T, U, V, Ret> {
         }
     }
 
+    /// Run this update against the given schema.
+    ///
+    /// The target table is qualified with `schema_name` in the generated SQL,
+    /// so `diesel::update(users::table).set(..).schema_name(&s)` updates
+    /// `<s>.users` rather than the connection's default schema. The schema is a
+    /// runtime value, which is why it is not part of the query's type.
+    ///
+    /// Update statements are never stored in the prepared statement cache, so
+    /// unlike select, insert and delete they are unaffected by how the schema
+    /// interacts with the cache key.
     pub fn schema_name(self, schema_name: &String) -> Self {
-        self.set_schema_name(&schema_name)
+        self.set_schema_name(schema_name)
     }
 }
 

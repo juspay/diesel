@@ -3,8 +3,8 @@ use crate::query_source::Table;
 /// The `schema_name` method
 ///
 /// This trait should not be relied on directly by most apps. Its behavior is
-/// provided by [`QueryDsl`]. However, you may need a from clause on this trait
-/// to call `limit` from generic code.
+/// provided by [`QueryDsl`]. However, you may need a bound on this trait
+/// to call `schema_name` from generic code.
 ///
 /// [`QueryDsl`]: crate::QueryDsl
 pub trait SchemaNameDsl {

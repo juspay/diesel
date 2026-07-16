@@ -219,8 +219,19 @@ impl<T: QuerySource, U, Op, Ret> InsertStatement<T, U, Op, Ret> {
         }
     }
 
+    /// Run this insert against the given schema.
+    ///
+    /// The target table is qualified with `schema_name` in the generated SQL,
+    /// so `insert_into(users::table).values(..).schema_name(&s)` inserts into
+    /// `<s>.users` rather than into the connection's default schema. The schema
+    /// is a runtime value, which is why it is not part of the query's type.
+    ///
+    /// Because the SQL depends on a runtime value, such a query has no static
+    /// query id and is cached by its SQL instead. See [`QueryId`] for details.
+    ///
+    /// [`QueryId`]: crate::query_builder::QueryId
     pub fn schema_name(self, schema_name: &String) -> Self {
-        self.set_schema_name(&schema_name)
+        self.set_schema_name(schema_name)
     }
 }
 
