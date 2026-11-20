@@ -17,6 +17,7 @@ tokio-postgres-rustls = { version = "0.14.0", default-features = false, features
 
 [dependencies.diesel]
 version = "2.4.0"
+package = "juspay_diesel"
 default-features = false
 path = "../../../../diesel"
 

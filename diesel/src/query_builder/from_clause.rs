@@ -115,11 +115,11 @@ impl<F: QuerySource> FromClause<F> {
     }
 
     pub(crate) fn set_schema_name(self, schema_name: &String) -> Self {
-      Self {
-        from_clause: self.from_clause,
-        schema_name: Some(schema_name.to_owned()),
-        source: self.source,
-      }
+        Self {
+            from_clause: self.from_clause,
+            schema_name: Some(schema_name.to_owned()),
+            source: self.source,
+        }
     }
 }
 

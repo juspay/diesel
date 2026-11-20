@@ -13,6 +13,7 @@ tokio = { version = "1.2.0", default-features = false, features = ["macros", "rt
 
 [dependencies.diesel]
 version = "2.4.0"
+package = "juspay_diesel"
 default-features = false
 features = ["returning_clauses_for_sqlite_3_35"]
 path = "../../../diesel"
