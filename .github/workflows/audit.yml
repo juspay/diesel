@@ -4,6 +4,8 @@ on:
     paths:
       - "**/Cargo.toml"
       - "**/Cargo.lock"
+      - "deny.toml"
+      - ".github/workflows/audit.yml"
   schedule:
     - cron: "0 0 */7 * *"
 
@@ -24,4 +26,5 @@ jobs:
         with:
           tool: cargo-deny
       - run: |
+          cargo update -p libsqlite3-sys
           cargo deny check

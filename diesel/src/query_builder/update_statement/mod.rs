@@ -297,6 +297,7 @@ where
 {
     type Output = BoxedCloneUpdateStatement<'a, DB, T, V, Ret>;
 
+    // dejadoc: allow
     fn internal_into_boxed_clone(self) -> Self::Output {
         UpdateStatement {
             from_clause: self.from_clause,

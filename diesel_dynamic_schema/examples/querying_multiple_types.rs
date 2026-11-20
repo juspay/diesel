@@ -33,10 +33,8 @@ fn main() {
     // Use typical Diesel syntax to get some data.
     let users = users.select((id, name)).load::<(i32, String)>(conn);
 
-    // Print the results.
+    // Confirm the query succeeds without logging row values.
     // The `users` are type `std::result::Result<std::vec::Vec<(i32, std::string::String)>, diesel::result::Error>`
-    let users = users.unwrap();
-    for (user_id, user_name) in users {
-        println!("user id:{user_id} name:{user_name}");
-    }
+    let _users = users.unwrap();
+    println!("query completed successfully");
 }

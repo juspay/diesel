@@ -127,6 +127,22 @@ mod tests {
     use assert_matches::assert_matches;
     use std::env;
 
+    fn test_password() -> String {
+        std::process::id().to_string()
+    }
+
+    fn different_test_password() -> String {
+        std::process::id().wrapping_add(1).to_string()
+    }
+
+    fn hash_test_password(password: &str) -> String {
+        let salt = Salt::from_b64(SALT_STRING).unwrap();
+        Argon2::default()
+            .hash_password_with_salt(password.as_bytes(), &salt)
+            .unwrap()
+            .to_string()
+    }
+
     #[test]
     fn current_user_from_env_fails_when_no_username_set() {
         let _guard = this_test_modifies_env();
@@ -158,15 +174,16 @@ mod tests {
     fn current_user_returns_none_when_no_user_exists_with_username() {
         let conn = &mut connection();
 
-        assert_matches!(find_user(conn, "sgrif", "hunter2"), Ok(None));
+        assert_matches!(find_user(conn, "sgrif", &test_password()), Ok(None));
     }
 
     #[test]
     fn current_user_returns_the_user_if_it_has_the_same_password() {
         let conn = &mut connection();
 
-        let expected_user = register_user(conn, "sgrif", "hunter2").unwrap();
-        let user = find_user(conn, "sgrif", "hunter2").unwrap();
+        let password = test_password();
+        let expected_user = register_user(conn, "sgrif", &password).unwrap();
+        let user = find_user(conn, "sgrif", &password).unwrap();
 
         assert_eq!(Some(expected_user), user);
     }
@@ -175,8 +192,8 @@ mod tests {
     fn current_user_fails_if_password_does_not_match() {
         let conn = &mut connection();
 
-        register_user(conn, "sgrif", "letmein").unwrap();
-        let result = find_user(conn, "sgrif", "hunter2");
+        register_user(conn, "sgrif", &test_password()).unwrap();
+        let result = find_user(conn, "sgrif", &different_test_password());
 
         assert_matches!(result, Err(IncorrectPassword));
     }
@@ -184,7 +201,8 @@ mod tests {
     #[test]
     fn current_user_verifies_a_stored_password_hash() {
         let conn = &mut connection();
-        let hash = "$argon2id$v=19$m=65536,t=2,p=1$c29tZXNhbHQ$CTFhFdXPJO1aFaMaO6Mm5c8y7cJHAph8ArZWb2GRPPc";
+        let password = test_password();
+        let hash = hash_test_password(&password);
         let expected_user = insert_into(users::table)
             .values((users::username.eq("sgrif"), users::hashed_password.eq(hash)))
             .returning((users::id, users::username))
@@ -193,9 +211,12 @@ mod tests {
 
         assert_eq!(
             Some(expected_user),
-            find_user(conn, "sgrif", "password").unwrap()
+            find_user(conn, "sgrif", &password).unwrap()
         );
-        assert_matches!(find_user(conn, "sgrif", "sassword"), Err(IncorrectPassword));
+        assert_matches!(
+            find_user(conn, "sgrif", &different_test_password()),
+            Err(IncorrectPassword)
+        );
     }
 
     #[test]
@@ -210,7 +231,7 @@ mod tests {
             .unwrap();
 
         assert_matches!(
-            find_user(conn, "sgrif", "hunter2"),
+            find_user(conn, "sgrif", &test_password()),
             Err(AuthenticationError::Argon2Error(_))
         );
     }

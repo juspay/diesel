@@ -36,7 +36,7 @@ where
     match result {
         Ok(res) => {
             if cmp(&value, &res) {
-                println!("{value:?}, {res:?}");
+                println!("value did not round-trip");
                 false
             } else {
                 true
@@ -47,8 +47,8 @@ where
         {
             true
         }
-        Err(e) => {
-            panic!("Query failed: {e:?} -> value: {value:?}")
+        Err(_) => {
+            panic!("type round-trip query failed")
         }
     }
 }
