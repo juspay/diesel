@@ -665,7 +665,7 @@ jobs:
       - name: Check diesel_derives
         run: cargo +1.88.0 minimal-versions check -p diesel_derives --features "postgres sqlite mysql mariadb 32-column-tables 64-column-tables 128-column-tables without-deprecated with-deprecated r2d2"
       - name: Check diesel
-        run: cargo +1.88.0 minimal-versions check -p diesel --features "postgres mysql mariadb sqlite extras"
+        run: cargo +1.88.0 minimal-versions check -p juspay_diesel --features "postgres mysql mariadb sqlite extras"
       - name: Check diesel_dynamic_schema
         run: cargo +1.88.0 minimal-versions check -p diesel-dynamic-schema --all-features
       - name: Check diesel_migrations
@@ -728,11 +728,11 @@ jobs:
           rustup component add miri
       - name: Run miri tests for default target
         run: |
-          cargo +nightly miri test -p diesel -F postgres check_as_ref_
-          cargo +nightly miri test -p diesel -F sqlite -F serde_json sqlite::types::json::tests::
+          cargo +nightly miri test -p juspay_diesel -F postgres check_as_ref_
+          cargo +nightly miri test -p juspay_diesel -F sqlite -F serde_json sqlite::types::json::tests::
       - name: Run miri tests for big-endian target
         run: |
-          cargo +nightly miri test -p diesel -F postgres check_as_ref_ --target s390x-unknown-linux-gnu
+          cargo +nightly miri test -p juspay_diesel -F postgres check_as_ref_ --target s390x-unknown-linux-gnu
   Miri-Native-Lib:
     name: Miri Tests (sqlite via native lib)
     runs-on: ubuntu-latest

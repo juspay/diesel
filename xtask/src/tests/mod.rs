@@ -122,7 +122,7 @@ impl TestArgs {
             let mut command = Command::new("cargo");
             command
                 .args(["+nightly", "miri", "nextest", "run"])
-                .args(["-p", "diesel", "-p", "diesel_tests"])
+                .args(["-p", "juspay_diesel", "-p", "diesel_tests"])
                 .args(["--no-default-features", "-F", "sqlite"])
                 .current_dir(&metadata.workspace_root)
                 .env("MIRIFLAGS", format!("-Zmiri-native-lib={native_lib}"))
@@ -149,7 +149,7 @@ impl TestArgs {
             let mut command = Command::new("cargo");
             command
                 .args(["+nightly", "miri", "test", "--doc"])
-                .args(["--no-default-features", "-p", "diesel"])
+                .args(["--no-default-features", "-p", "juspay_diesel"])
                 .args(["-F", "sqlite"])
                 .current_dir(&metadata.workspace_root)
                 .env("MIRIFLAGS", format!("-Zmiri-native-lib={native_lib}"))
@@ -347,7 +347,7 @@ impl TestArgs {
                     "--doc",
                     "--no-default-features",
                     "-p",
-                    "diesel",
+                    "juspay_diesel",
                     "-p",
                     "diesel_derives",
                     "-p",

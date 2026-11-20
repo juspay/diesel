@@ -12,7 +12,7 @@ use crate::query_dsl::methods::OrFilterDsl;
 use crate::query_source::QuerySource;
 use crate::sql_types::BoolOrNullableBool;
 
-impl<T, U, Op, Ret> InsertStatement<T, U, Op, Ret>
+impl<T, U, Op, Ret, S> InsertStatement<T, U, Op, Ret, S>
 where
     T: QuerySource,
     U: UndecoratedInsertRecord<T> + IntoConflictValueClause,
@@ -481,10 +481,12 @@ pub trait OnConflictHelper {
     type Op;
     /// The `RETURNING` clause of the statement
     type Ret;
+    /// The schema name stored by the statement
+    type Schema;
 }
 
-impl<T, U, Op, Ret, Target> OnConflictHelper
-    for IncompleteOnConflict<InsertStatement<T, U, Op, Ret>, Target>
+impl<T, U, Op, Ret, S, Target> OnConflictHelper
+    for IncompleteOnConflict<InsertStatement<T, U, Op, Ret, S>, Target>
 where
     T: QuerySource,
 {
@@ -493,6 +495,7 @@ where
     type Target = Target;
     type Op = Op;
     type Ret = Ret;
+    type Schema = S;
 }
 
 impl<Stmt, Target, Changes> SetAutoTypeHelper<Changes> for IncompleteDoUpdate<Stmt, Target>
@@ -515,11 +518,12 @@ where
         >,
         <Stmt as crate::query_builder::insert_statement::InsertAutoTypeHelper>::Op,
         <Stmt as crate::query_builder::insert_statement::InsertAutoTypeHelper>::Ret,
+        <Stmt as crate::query_builder::insert_statement::InsertAutoTypeHelper>::Schema,
     >;
 }
 
-impl<T: QuerySource, U, Op, Ret, Target>
-    IncompleteOnConflict<InsertStatement<T, U, Op, Ret>, Target>
+impl<T: QuerySource, U, Op, Ret, S, Target>
+    IncompleteOnConflict<InsertStatement<T, U, Op, Ret, S>, Target>
 {
     /// Creates a query with `ON CONFLICT (target) DO NOTHING`
     ///
@@ -854,8 +858,8 @@ pub struct IncompleteDoUpdate<Stmt, Target> {
     target: Target,
 }
 
-impl<T: QuerySource, U, Op, Ret, Target>
-    IncompleteDoUpdate<InsertStatement<T, U, Op, Ret>, Target>
+impl<T: QuerySource, U, Op, Ret, S, Target>
+    IncompleteDoUpdate<InsertStatement<T, U, Op, Ret, S>, Target>
 {
     /// See [`do_update`] for usage examples.
     ///
@@ -877,14 +881,14 @@ impl<T: QuerySource, U, Op, Ret, Target>
     }
 }
 
-impl<T, U, Op, Ret, Target, Action, WhereClause, Predicate> FilterDsl<Predicate>
-    for InsertStatement<T, OnConflictValues<U, Target, Action, WhereClause>, Op, Ret>
+impl<T, U, Op, Ret, S, Target, Action, WhereClause, Predicate> FilterDsl<Predicate>
+    for InsertStatement<T, OnConflictValues<U, Target, Action, WhereClause>, Op, Ret, S>
 where
     T: QuerySource,
     WhereClause: WhereAnd<Predicate>,
 {
     type Output =
-        InsertStatement<T, OnConflictValues<U, Target, Action, WhereClause::Output>, Op, Ret>;
+        InsertStatement<T, OnConflictValues<U, Target, Action, WhereClause::Output>, Op, Ret, S>;
 
     fn filter(self, predicate: Predicate) -> Self::Output {
         self.replace_values(|values| {
@@ -893,14 +897,14 @@ where
     }
 }
 
-impl<T, U, Op, Ret, Target, Action, WhereClause, Predicate> OrFilterDsl<Predicate>
-    for InsertStatement<T, OnConflictValues<U, Target, Action, WhereClause>, Op, Ret>
+impl<T, U, Op, Ret, S, Target, Action, WhereClause, Predicate> OrFilterDsl<Predicate>
+    for InsertStatement<T, OnConflictValues<U, Target, Action, WhereClause>, Op, Ret, S>
 where
     T: QuerySource,
     WhereClause: WhereOr<Predicate>,
 {
     type Output =
-        InsertStatement<T, OnConflictValues<U, Target, Action, WhereClause::Output>, Op, Ret>;
+        InsertStatement<T, OnConflictValues<U, Target, Action, WhereClause::Output>, Op, Ret, S>;
 
     fn or_filter(self, predicate: Predicate) -> Self::Output {
         self.replace_values(|values| {

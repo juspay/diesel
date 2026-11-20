@@ -4,6 +4,7 @@ use crate::backend::DieselReserveSpecialization;
 use crate::expression::grouped::Grouped;
 use crate::expression::nullable::Nullable;
 use crate::prelude::*;
+use crate::query_builder::from_clause::SchemaName;
 use crate::query_builder::*;
 use crate::query_dsl::InternalJoinDsl;
 use crate::sql_types::BoolOrNullableBool;
@@ -206,6 +207,22 @@ where
         self.kind.walk_ast(out.reborrow())?;
         out.push_sql(" JOIN ");
         self.right.from_clause.walk_ast(out.reborrow())?;
+        Ok(())
+    }
+
+    fn walk_ast_with_schema<'b>(
+        &'b self,
+        schema: &str,
+        mut out: AstPass<'_, 'b, DB>,
+    ) -> QueryResult<()> {
+        self.left
+            .from_clause
+            .walk_ast_with_schema(schema, out.reborrow())?;
+        self.kind.walk_ast(out.reborrow())?;
+        out.push_sql(" JOIN ");
+        self.right
+            .from_clause
+            .walk_ast_with_schema(schema, out.reborrow())?;
         Ok(())
     }
 }
@@ -435,12 +452,13 @@ where
     type InnerJoin = JoinOn<Join::InnerJoin, On>;
 }
 
-impl<From> ToInnerJoin for SelectStatement<FromClause<From>>
+impl<From, Schema> ToInnerJoin for SelectStatement<FromClause<From, Schema>>
 where
     From: ToInnerJoin + QuerySource,
     From::InnerJoin: QuerySource,
+    Schema: SchemaName,
 {
-    type InnerJoin = SelectStatement<FromClause<From::InnerJoin>>;
+    type InnerJoin = SelectStatement<FromClause<From::InnerJoin, Schema>>;
 }
 
 impl<T: QueryRelation> ToInnerJoin for T {

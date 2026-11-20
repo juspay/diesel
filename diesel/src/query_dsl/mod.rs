@@ -1645,7 +1645,10 @@ pub trait QueryDsl: Sized {
         methods::SelectNullableDsl::nullable(self)
     }
 
-    fn schema_name(self, schema_name: &String) -> SchameName<Self>
+    /// Sets the schema name used to qualify this query's table.
+    ///
+    /// The schema name is rendered as a quoted SQL identifier.
+    fn schema_name(self, schema_name: &str) -> SchameName<Self>
     where
         Self: methods::SchemaNameDsl,
     {

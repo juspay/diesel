@@ -746,6 +746,7 @@ pub mod helper_types {
             <<I as crate::query_builder::insert_statement::InsertAutoTypeHelper>::Values as crate::query_builder::IntoConflictValueClause>::ValueClause,
             <I as crate::query_builder::insert_statement::InsertAutoTypeHelper>::Op,
             <I as crate::query_builder::insert_statement::InsertAutoTypeHelper>::Ret,
+            <I as crate::query_builder::insert_statement::InsertAutoTypeHelper>::Schema,
         >,
         crate::query_builder::ConflictTarget<Target>,
         >;
@@ -762,6 +763,7 @@ pub mod helper_types {
         >,
         <I as crate::query_builder::insert_statement::InsertAutoTypeHelper>::Op,
         <I as crate::query_builder::insert_statement::InsertAutoTypeHelper>::Ret,
+        <I as crate::query_builder::insert_statement::InsertAutoTypeHelper>::Schema,
     >;
 
     /// Represents the return type of
@@ -777,6 +779,7 @@ pub mod helper_types {
         >,
         <I as crate::upsert::OnConflictHelper>::Op,
         <I as crate::upsert::OnConflictHelper>::Ret,
+        <I as crate::upsert::OnConflictHelper>::Schema,
     >;
 
     /// Represents the return type of
@@ -787,6 +790,7 @@ pub mod helper_types {
             <I as crate::upsert::OnConflictHelper>::Values,
             <I as crate::upsert::OnConflictHelper>::Op,
             <I as crate::upsert::OnConflictHelper>::Ret,
+            <I as crate::upsert::OnConflictHelper>::Schema,
         >,
         <I as crate::upsert::OnConflictHelper>::Target,
     >;

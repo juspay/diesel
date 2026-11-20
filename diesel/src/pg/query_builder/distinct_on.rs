@@ -284,20 +284,21 @@ where
     }
 }
 
-impl<ST, F, S, D, W, O, LOf, G, H, Selection> DistinctOnDsl<Selection>
-    for SelectStatement<FromClause<F>, S, D, W, O, LOf, G, H>
+impl<ST, F, Schema, S, D, W, O, LOf, G, H, Selection> DistinctOnDsl<Selection>
+    for SelectStatement<FromClause<F, Schema>, S, D, W, O, LOf, G, H>
 where
     G: ValidGroupByClause,
     F: QuerySource,
     Selection: SelectableExpression<F>,
     Self: SelectQuery<SqlType = ST>,
     O: ValidOrderingForDistinct<DistinctOnClause<Selection>>,
-    SelectStatement<FromClause<F>, S, DistinctOnClause<Selection>, W, O, LOf, G, H>:
+    SelectStatement<FromClause<F, Schema>, S, DistinctOnClause<Selection>, W, O, LOf, G, H>:
         SelectQuery<SqlType = ST>,
-    S: SelectClauseExpression<FromClause<F>>,
+    S: SelectClauseExpression<FromClause<F, Schema>>,
     (Selection, S::Selection): ValidGrouping<G::Expressions>,
 {
-    type Output = SelectStatement<FromClause<F>, S, DistinctOnClause<Selection>, W, O, LOf, G, H>;
+    type Output =
+        SelectStatement<FromClause<F, Schema>, S, DistinctOnClause<Selection>, W, O, LOf, G, H>;
 
     fn distinct_on(self, selection: Selection) -> Self::Output {
         SelectStatement::new(

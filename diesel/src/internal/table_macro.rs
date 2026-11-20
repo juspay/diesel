@@ -6,7 +6,7 @@ pub use crate::expression::subselect::{SubselectFieldGrouping, SubselectGroupBy}
 #[cfg(feature = "postgres_backend")]
 pub use crate::pg::query_builder::tablesample::TablesampleMethod;
 #[doc(hidden)]
-pub use crate::query_builder::from_clause::{FromClause, NoFromClause};
+pub use crate::query_builder::from_clause::{FromClause, NoFromClause, SchemaName};
 #[doc(hidden)]
 pub use crate::query_builder::nodes::{
     Identifier, InfixNode, StaticQueryFragment, StaticQueryFragmentInstance,

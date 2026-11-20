@@ -78,11 +78,13 @@ impl<ST, QS: Clone, DB, GB> Clone for BoxedCloneSelectStatement<'_, ST, QS, DB, 
     }
 }
 
-impl<'a, ST, QS: QuerySource, DB, GB> BoxedCloneSelectStatement<'a, ST, FromClause<QS>, DB, GB> {
+impl<'a, ST, QS: QuerySource, Schema, DB, GB>
+    BoxedCloneSelectStatement<'a, ST, FromClause<QS, Schema>, DB, GB>
+{
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn new<S, G>(
         select: S,
-        from: FromClause<QS>,
+        from: FromClause<QS, Schema>,
         distinct: Arc<dyn QueryFragment<DB> + Send + Sync + 'a>,
         where_clause: BoxedCloneWhereClause<'a, DB>,
         order: Option<Arc<dyn QueryFragment<DB> + Send + Sync + 'a>>,
@@ -93,7 +95,7 @@ impl<'a, ST, QS: QuerySource, DB, GB> BoxedCloneSelectStatement<'a, ST, FromClau
     where
         DB: Backend,
         G: ValidGroupByClause<Expressions = GB> + QueryFragment<DB> + Send + Sync + 'a,
-        S: SelectClauseExpression<FromClause<QS>, SelectClauseSqlType = ST>
+        S: SelectClauseExpression<FromClause<QS, Schema>, SelectClauseSqlType = ST>
             + QueryFragment<DB>
             + Send
             + Sync
@@ -261,21 +263,29 @@ impl<ST, QS, DB, GB> QueryId for BoxedCloneSelectStatement<'_, ST, QS, DB, GB> {
     const HAS_STATIC_QUERY_ID: bool = false;
 }
 
-impl<'a, ST, QS, DB, Rhs, Kind, On, GB> InternalJoinDsl<Rhs, Kind, On>
-    for BoxedCloneSelectStatement<'a, ST, FromClause<QS>, DB, GB>
+impl<'a, ST, QS, Schema, DB, Rhs, Kind, On, GB> InternalJoinDsl<Rhs, Kind, On>
+    for BoxedCloneSelectStatement<'a, ST, FromClause<QS, Schema>, DB, GB>
 where
     QS: QuerySource,
     Rhs: QuerySource,
     JoinOn<Join<QS, Rhs, Kind>, On>: QuerySource,
-    BoxedCloneSelectStatement<'a, ST, FromClause<JoinOn<Join<QS, Rhs, Kind>, On>>, DB, GB>: AsQuery,
+    BoxedCloneSelectStatement<'a, ST, FromClause<JoinOn<Join<QS, Rhs, Kind>, On>, Schema>, DB, GB>:
+        AsQuery,
 {
-    type Output =
-        BoxedCloneSelectStatement<'a, ST, FromClause<JoinOn<Join<QS, Rhs, Kind>, On>>, DB, GB>;
+    type Output = BoxedCloneSelectStatement<
+        'a,
+        ST,
+        FromClause<JoinOn<Join<QS, Rhs, Kind>, On>, Schema>,
+        DB,
+        GB,
+    >;
 
     fn join(self, rhs: Rhs, kind: Kind, on: On) -> Self::Output {
         BoxedCloneSelectStatement {
             select: self.select,
-            from: FromClause::new(Join::new(self.from.source, rhs, kind).on(on)),
+            from: self
+                .from
+                .map_source(|source| Join::new(source, rhs, kind).on(on)),
             distinct: self.distinct,
             where_clause: self.where_clause,
             order: self.order,
@@ -320,14 +330,14 @@ impl<'a, ST, QS, DB, GB> BoxedCloneSelectStatement<'a, ST, QS, DB, GB> {
     }
 }
 
-impl<'a, ST, QS, DB, Selection, GB> SelectDsl<Selection>
-    for BoxedCloneSelectStatement<'a, ST, FromClause<QS>, DB, GB>
+impl<'a, ST, QS, Schema, DB, Selection, GB> SelectDsl<Selection>
+    for BoxedCloneSelectStatement<'a, ST, FromClause<QS, Schema>, DB, GB>
 where
     DB: Backend,
     QS: QuerySource,
     Selection: SelectableExpression<QS> + QueryFragment<DB> + ValidGrouping<GB> + Send + Sync + 'a,
 {
-    type Output = BoxedCloneSelectStatement<'a, Selection::SqlType, FromClause<QS>, DB, GB>;
+    type Output = BoxedCloneSelectStatement<'a, Selection::SqlType, FromClause<QS, Schema>, DB, GB>;
 
     fn select(self, selection: Selection) -> Self::Output {
         self.with_select(Arc::new(selection))
@@ -352,8 +362,8 @@ where
     }
 }
 
-impl<'a, ST, QS, DB, Predicate, GB> FilterDsl<Predicate>
-    for BoxedCloneSelectStatement<'a, ST, FromClause<QS>, DB, GB>
+impl<'a, ST, QS, Schema, DB, Predicate, GB> FilterDsl<Predicate>
+    for BoxedCloneSelectStatement<'a, ST, FromClause<QS, Schema>, DB, GB>
 where
     QS: QuerySource,
     BoxedCloneWhereClause<'a, DB>: WhereAnd<Predicate, Output = BoxedCloneWhereClause<'a, DB>>,
@@ -383,8 +393,8 @@ where
     }
 }
 
-impl<'a, ST, QS, DB, Predicate, GB> OrFilterDsl<Predicate>
-    for BoxedCloneSelectStatement<'a, ST, FromClause<QS>, DB, GB>
+impl<'a, ST, QS, Schema, DB, Predicate, GB> OrFilterDsl<Predicate>
+    for BoxedCloneSelectStatement<'a, ST, FromClause<QS, Schema>, DB, GB>
 where
     QS: QuerySource,
     BoxedCloneWhereClause<'a, DB>: WhereOr<Predicate, Output = BoxedCloneWhereClause<'a, DB>>,
@@ -441,8 +451,8 @@ where
 }
 
 // no impls for `NoFromClause` here because order is not really supported there yet
-impl<'a, ST, QS, DB, Order, GB> OrderDsl<Order>
-    for BoxedCloneSelectStatement<'a, ST, FromClause<QS>, DB, GB>
+impl<'a, ST, QS, Schema, DB, Order, GB> OrderDsl<Order>
+    for BoxedCloneSelectStatement<'a, ST, FromClause<QS, Schema>, DB, GB>
 where
     DB: Backend,
     QS: QuerySource,
@@ -456,8 +466,8 @@ where
     }
 }
 
-impl<'a, ST, QS, DB, Order, GB> ThenOrderDsl<Order>
-    for BoxedCloneSelectStatement<'a, ST, FromClause<QS>, DB, GB>
+impl<'a, ST, QS, Schema, DB, Order, GB> ThenOrderDsl<Order>
+    for BoxedCloneSelectStatement<'a, ST, FromClause<QS, Schema>, DB, GB>
 where
     DB: Backend + 'a,
     QS: QuerySource,
@@ -474,7 +484,8 @@ where
     }
 }
 
-impl<ST, QS, DB, Rhs> JoinTo<Rhs> for BoxedCloneSelectStatement<'_, ST, FromClause<QS>, DB, ()>
+impl<ST, QS, Schema, DB, Rhs> JoinTo<Rhs>
+    for BoxedCloneSelectStatement<'_, ST, FromClause<QS, Schema>, DB, ()>
 where
     QS: JoinTo<Rhs> + QuerySource,
 {
@@ -539,8 +550,8 @@ where
     }
 }
 
-impl<'a, ST, QS, DB, GB, Predicate> HavingDsl<Predicate>
-    for BoxedCloneSelectStatement<'a, ST, FromClause<QS>, DB, GB>
+impl<'a, ST, QS, Schema, DB, GB, Predicate> HavingDsl<Predicate>
+    for BoxedCloneSelectStatement<'a, ST, FromClause<QS, Schema>, DB, GB>
 where
     QS: QuerySource,
     DB: Backend,

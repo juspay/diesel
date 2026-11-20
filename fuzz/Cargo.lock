@@ -144,39 +144,15 @@ dependencies = [
 ]
 
 [[package]]
-name = "diesel"
-version = "2.3.14"
-dependencies = [
- "bigdecimal",
- "bitflags",
- "byteorder",
- "chrono",
- "diesel_derives",
- "downcast-rs",
- "ipnet",
- "ipnetwork",
- "itoa",
- "libc",
- "libsqlite3-sys",
- "num-bigint",
- "num-integer",
- "num-traits",
- "serde_json",
- "sqlite-wasm-rs",
- "time",
- "uuid",
-]
-
-[[package]]
 name = "diesel-fuzz"
 version = "0.0.0"
 dependencies = [
  "arbitrary",
  "bigdecimal",
  "chrono",
- "diesel",
  "ipnet",
  "ipnetwork",
+ "juspay_diesel",
  "libfuzzer-sys",
  "libsqlite3-sys",
  "serde_json",
@@ -195,7 +171,7 @@ dependencies = [
 
 [[package]]
 name = "diesel_derives"
-version = "2.3.10"
+version = "2.4.0"
 dependencies = [
  "diesel_attribute_parser",
  "diesel_table_macro_syntax",
@@ -207,7 +183,7 @@ dependencies = [
 
 [[package]]
 name = "diesel_table_macro_syntax"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "syn 3.0.5",
 ]
@@ -220,7 +196,7 @@ checksum = "117240f60069e65410b3ae1bb213295bd828f707b5bec6596a1afc8793ce0cbc"
 
 [[package]]
 name = "dsl_auto_type"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "darling",
  "either",
@@ -365,6 +341,31 @@ dependencies = [
  "cfg-if",
  "futures-util",
  "wasm-bindgen",
+]
+
+[[package]]
+name = "juspay_diesel"
+version = "2.4.0"
+dependencies = [
+ "bigdecimal",
+ "bitflags",
+ "byteorder",
+ "chrono",
+ "diesel_derives",
+ "downcast-rs",
+ "ipnet",
+ "ipnetwork",
+ "itoa",
+ "libc",
+ "libsqlite3-sys",
+ "num-bigint",
+ "num-integer",
+ "num-traits",
+ "serde_json",
+ "sqlite-wasm-rs",
+ "sqlstate",
+ "time",
+ "uuid",
 ]
 
 [[package]]
@@ -575,6 +576,10 @@ dependencies = [
  "rsqlite-vfs",
  "wasm-bindgen",
 ]
+
+[[package]]
+name = "sqlstate"
+version = "0.2.0"
 
 [[package]]
 name = "strsim"

@@ -232,7 +232,7 @@ impl<T: QuerySource, U, V, Ret> UpdateStatement<T, U, V, Ret> {
         BoxedCloneDsl::internal_into_boxed_clone(self)
     }
 
-    pub(crate) fn set_schema_name(self, schema_name: &String) -> Self {
+    pub(crate) fn set_schema_name(self, schema_name: &str) -> Self {
         UpdateStatement {
             from_clause: self.from_clause,
             where_clause: self.where_clause,
@@ -243,8 +243,11 @@ impl<T: QuerySource, U, V, Ret> UpdateStatement<T, U, V, Ret> {
         }
     }
 
-    pub fn schema_name(self, schema_name: &String) -> Self {
-        self.set_schema_name(&schema_name)
+    /// Sets the schema name used to qualify the updated table.
+    ///
+    /// The schema name is rendered as a quoted SQL identifier.
+    pub fn schema_name(self, schema_name: &str) -> Self {
+        self.set_schema_name(schema_name)
     }
 }
 
@@ -323,10 +326,11 @@ where
         out.unsafe_to_cache_prepared();
         out.push_sql("UPDATE ");
         if let Some(schema) = &self.schema_name {
-            out.push_identifier(schema)?;
-            out.push_sql(".");
+            self.from_clause
+                .walk_ast_with_schema(schema, out.reborrow())?;
+        } else {
+            self.from_clause.walk_ast(out.reborrow())?;
         }
-        self.from_clause.walk_ast(out.reborrow())?;
         self.set_clause.walk_ast(out.reborrow())?;
         self.values.walk_ast(out.reborrow())?;
         self.where_clause.walk_ast(out.reborrow())?;

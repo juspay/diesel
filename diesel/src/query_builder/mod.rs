@@ -261,6 +261,18 @@ pub trait QueryFragment<DB: Backend, SP = self::private::NotSpecialized> {
     /// passes. See [`AstPass`] for more details.
     fn walk_ast<'b>(&'b self, pass: AstPass<'_, 'b, DB>) -> QueryResult<()>;
 
+    /// Walk over this `QueryFragment`, qualifying its relation with `schema`.
+    #[doc(hidden)]
+    fn walk_ast_with_schema<'b>(
+        &'b self,
+        schema: &str,
+        mut pass: AstPass<'_, 'b, DB>,
+    ) -> QueryResult<()> {
+        pass.push_identifier(schema)?;
+        pass.push_sql(".");
+        self.walk_ast(pass)
+    }
+
     /// Converts this `QueryFragment` to its SQL representation.
     ///
     /// This method should only be called by implementations of `Connection`.

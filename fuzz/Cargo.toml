@@ -22,6 +22,7 @@ libsqlite3-sys = { version = "0.39", features = ["bundled"] }
 
 [dependencies.diesel]
 path = "../diesel"
+package = "juspay_diesel"
 default-features = false
 features = [
     "chrono",

@@ -5,7 +5,7 @@ edition.workspace = true
 publish = false
 
 [dependencies]
-diesel = { version = "2.4.0", path = "../../../diesel", features = ["mariadb"] }
+diesel = { version = "2.4.0", path = "../../../diesel", package = "juspay_diesel", features = ["mariadb"] }
 mysqlclient-sys = { workspace = true, features = ["bundled"] }
 openssl-sys = { workspace = true, features = ["vendored"] }
 dotenvy = "0.15"

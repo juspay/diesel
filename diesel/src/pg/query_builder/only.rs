@@ -65,6 +65,16 @@ where
         self.source.walk_ast(pass.reborrow())?;
         Ok(())
     }
+
+    fn walk_ast_with_schema<'b>(
+        &'b self,
+        schema: &str,
+        mut pass: AstPass<'_, 'b, Pg>,
+    ) -> QueryResult<()> {
+        pass.push_sql(" ONLY ");
+        self.source.walk_ast_with_schema(schema, pass.reborrow())?;
+        Ok(())
+    }
 }
 
 impl<S> AsQuery for Only<S>

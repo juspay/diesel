@@ -1,4 +1,4 @@
-use super::from_clause::AsQuerySource;
+use super::from_clause::{AsQuerySource, SchemaName};
 use crate::expression::{Expression, SelectableExpression};
 use crate::query_builder::*;
 use crate::query_source::QuerySource;
@@ -76,7 +76,7 @@ pub trait SelectClauseExpression<QS> {
     type SelectClauseSqlType;
 }
 
-impl<T, QS> SelectClauseExpression<FromClause<QS>> for SelectClause<T>
+impl<T, QS, S> SelectClauseExpression<FromClause<QS, S>> for SelectClause<T>
 where
     QS: QuerySource,
     T: SelectableExpression<QS>,
@@ -93,9 +93,10 @@ where
     type SelectClauseSqlType = T::SqlType;
 }
 
-impl<QS> SelectClauseExpression<FromClause<QS>> for DefaultSelectClause<FromClause<QS>>
+impl<QS, S> SelectClauseExpression<FromClause<QS, S>> for DefaultSelectClause<FromClause<QS, S>>
 where
     QS: QuerySource,
+    S: SchemaName,
 {
     type Selection = QS::DefaultSelection;
     type SelectClauseSqlType = <Self::Selection as Expression>::SqlType;

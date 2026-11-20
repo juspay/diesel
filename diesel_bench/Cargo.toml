@@ -55,11 +55,12 @@ default-features = false
 
 [dependencies.diesel]
 path = "../diesel"
+package = "juspay_diesel"
 default-features = false
 features = []
 
 [build-dependencies]
-diesel = { path = "../diesel", default-features = false }
+diesel = { path = "../diesel", package = "juspay_diesel", default-features = false }
 diesel_migrations = { path = "../diesel_migrations" }
 dotenvy = "0.15"
 
@@ -90,7 +91,7 @@ codegen-units = 1
 
 [patch.crates-io]
 diesel-async = { git = "https://github.com/diesel-rs/diesel_async", branch = "main" }
-diesel = { path = "../diesel" }
+diesel = { path = "../diesel", package = "juspay_diesel" }
 
 [patch.'https://github.com/diesel-rs/diesel']
-diesel = { path = "../diesel" }
+diesel = { path = "../diesel", package = "juspay_diesel" }

@@ -319,8 +319,8 @@ where
     }
 }
 
-impl<S, F, D, W, O, LOf, G, H, LC, QS> ValidSubselect<QS>
-    for SelectStatement<FromClause<F>, S, D, W, O, LOf, G, H, LC>
+impl<S, F, Schema, D, W, O, LOf, G, H, LC, QS> ValidSubselect<QS>
+    for SelectStatement<FromClause<F, Schema>, S, D, W, O, LOf, G, H, LC>
 where
     Self: SelectQuery,
     F: QuerySource,
@@ -338,12 +338,12 @@ where
 {
 }
 
-impl<S, F, D, W, O, LOf, G, H, LC> ValidSubselect<NoFromClause>
-    for SelectStatement<FromClause<F>, S, D, W, O, LOf, G, H, LC>
+impl<S, F, Schema, D, W, O, LOf, G, H, LC> ValidSubselect<NoFromClause>
+    for SelectStatement<FromClause<F, Schema>, S, D, W, O, LOf, G, H, LC>
 where
     Self: SelectQuery,
     F: QuerySource,
-    W: ValidWhereClause<FromClause<F>>,
+    W: ValidWhereClause<FromClause<F, Schema>>,
 {
 }
 
@@ -381,11 +381,11 @@ where
     From: AsQuerySource,
     <From::QuerySource as QuerySource>::DefaultSelection: SelectableExpression<Self>,
 {
-    type FromClause = <From::QuerySource as QuerySource>::FromClause;
+    type FromClause = From::FromClause;
     type DefaultSelection = <From::QuerySource as QuerySource>::DefaultSelection;
 
-    fn from_clause(&self) -> <From::QuerySource as QuerySource>::FromClause {
-        self.from.as_query_source().from_clause()
+    fn from_clause(&self) -> Self::FromClause {
+        AsQuerySource::from_clause(&self.from)
     }
 
     fn default_selection(&self) -> Self::DefaultSelection {

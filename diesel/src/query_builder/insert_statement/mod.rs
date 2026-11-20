@@ -15,6 +15,7 @@ use crate::backend::{DieselReserveSpecialization, SqlDialect, sql_dialect};
 use crate::expression::grouped::Grouped;
 use crate::expression::operators::Eq;
 use crate::expression::{Expression, NonAggregate, SelectableExpression};
+use crate::query_builder::from_clause::SchemaName;
 use crate::query_builder::returning::{
     InsertStmtKind, NoReturningClause, ReturningClause, ReturningQuerySource,
 };
@@ -158,9 +159,9 @@ where
     feature = "i-implement-a-third-party-backend-and-opt-into-breaking-changes",
     public_fields(operator, target, records, returning)
 )]
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 #[must_use = "Queries are only executed when calling `load`, `get_result` or similar."]
-pub struct InsertStatement<T: QuerySource, U, Op = Insert, Ret = NoReturningClause> {
+pub struct InsertStatement<T: QuerySource, U, Op = Insert, Ret = NoReturningClause, S = ()> {
     /// The operator used by this InsertStatement
     ///
     /// Corresponds to either `Insert` or `Replace`
@@ -173,22 +174,24 @@ pub struct InsertStatement<T: QuerySource, U, Op = Insert, Ret = NoReturningClau
     returning: Ret,
     into_clause: T::FromClause,
     /// The schema the query runs in
-    schema_name: Option<String>,
+    schema_name: S,
 }
 
-impl<T, U, Op, Ret> QueryId for InsertStatement<T, U, Op, Ret>
+impl<T, U, Op, Ret, S> QueryId for InsertStatement<T, U, Op, Ret, S>
 where
     T: QuerySource + QueryId + 'static,
     U: QueryId,
     Op: QueryId,
     Ret: QueryId,
+    S: SchemaName,
 {
     type QueryId = InsertStatement<T, U::QueryId, Op::QueryId, Ret::QueryId>;
 
     const HAS_STATIC_QUERY_ID: bool = T::HAS_STATIC_QUERY_ID
         && U::HAS_STATIC_QUERY_ID
         && Op::HAS_STATIC_QUERY_ID
-        && Ret::HAS_STATIC_QUERY_ID;
+        && Ret::HAS_STATIC_QUERY_ID
+        && S::HAS_STATIC_QUERY_ID;
 }
 
 impl<T: QuerySource, U, Op, Ret> InsertStatement<T, U, Op, Ret> {
@@ -203,34 +206,49 @@ impl<T: QuerySource, U, Op, Ret> InsertStatement<T, U, Op, Ret> {
             target,
             records,
             returning,
-            schema_name: None,
+            schema_name: (),
         }
     }
+}
 
-    pub(crate) fn replace_values<F, V>(self, f: F) -> InsertStatement<T, V, Op, Ret>
+impl<T: QuerySource, U, Op, Ret, S> InsertStatement<T, U, Op, Ret, S> {
+    pub(crate) fn replace_values<F, V>(self, f: F) -> InsertStatement<T, V, Op, Ret, S>
     where
         F: FnOnce(U) -> V,
     {
-        InsertStatement::new(self.target, f(self.records), self.operator, self.returning)
+        InsertStatement {
+            into_clause: self.into_clause,
+            operator: self.operator,
+            target: self.target,
+            records: f(self.records),
+            returning: self.returning,
+            schema_name: self.schema_name,
+        }
     }
 
-    pub(crate) fn set_schema_name(self, schema_name: &String) -> Self {
+    pub(crate) fn set_schema_name(
+        self,
+        schema_name: &str,
+    ) -> InsertStatement<T, U, Op, Ret, String> {
         InsertStatement {
             into_clause: self.into_clause,
             operator: self.operator,
             target: self.target,
             records: self.records,
             returning: self.returning,
-            schema_name: Some(schema_name.to_owned()),
+            schema_name: schema_name.to_owned(),
         }
     }
 
-    pub fn schema_name(self, schema_name: &String) -> Self {
-        self.set_schema_name(&schema_name)
+    /// Sets the schema name used to qualify the inserted table.
+    ///
+    /// The schema name is rendered as a quoted SQL identifier.
+    pub fn schema_name(self, schema_name: &str) -> InsertStatement<T, U, Op, Ret, String> {
+        self.set_schema_name(schema_name)
     }
 }
 
-impl<T: QuerySource, U, C, Op, Ret> InsertStatement<T, InsertFromSelect<U, C>, Op, Ret> {
+impl<T: QuerySource, U, C, Op, Ret, S> InsertStatement<T, InsertFromSelect<U, C>, Op, Ret, S> {
     /// Set the column list when inserting from a select statement
     ///
     /// See the documentation for [`insert_into`] for usage examples.
@@ -239,17 +257,19 @@ impl<T: QuerySource, U, C, Op, Ret> InsertStatement<T, InsertFromSelect<U, C>, O
     pub fn into_columns<C2>(
         self,
         columns: C2,
-    ) -> InsertStatement<T, InsertFromSelect<U, C2>, Op, Ret>
+    ) -> InsertStatement<T, InsertFromSelect<U, C2>, Op, Ret, S>
     where
         C2: ColumnList<Table = T> + Expression,
         U: Query<SqlType = C2::SqlType>,
     {
-        InsertStatement::new(
-            self.target,
-            self.records.with_columns(columns),
-            self.operator,
-            self.returning,
-        )
+        InsertStatement {
+            into_clause: self.into_clause,
+            operator: self.operator,
+            target: self.target,
+            records: self.records.with_columns(columns),
+            returning: self.returning,
+            schema_name: self.schema_name,
+        }
     }
 }
 
@@ -275,10 +295,10 @@ where
     if records.rows_to_insert() == Some(0) {
         out.push_sql("SELECT 1 FROM ");
         if let Some(schema) = schema_name {
-            out.push_identifier(schema)?;
-            out.push_sql(".");
+            into_clause.walk_ast_with_schema(schema, out.reborrow())?;
+        } else {
+            into_clause.walk_ast(out.reborrow())?;
         }
-        into_clause.walk_ast(out.reborrow())?;
         out.push_sql(" WHERE 1=0");
         return Ok(());
     }
@@ -286,17 +306,17 @@ where
     operator.walk_ast(out.reborrow())?;
     out.push_sql(" INTO ");
     if let Some(schema) = schema_name {
-        out.push_identifier(schema)?;
-        out.push_sql(".");
+        into_clause.walk_ast_with_schema(schema, out.reborrow())?;
+    } else {
+        into_clause.walk_ast(out.reborrow())?;
     }
-    into_clause.walk_ast(out.reborrow())?;
     out.push_sql(" ");
     records.walk_ast(out.reborrow())?;
     returning.walk_ast(out.reborrow())?;
     Ok(())
 }
 
-impl<T, U, Op, Ret, DB> QueryFragment<DB> for InsertStatement<T, U, Op, Ret>
+impl<T, U, Op, Ret, S, DB> QueryFragment<DB> for InsertStatement<T, U, Op, Ret, S>
 where
     DB: Backend + DieselReserveSpecialization,
     T: Table,
@@ -304,35 +324,36 @@ where
     U: QueryFragment<DB> + CanInsertInSingleQuery<DB>,
     Op: QueryFragment<DB>,
     Ret: QueryFragment<DB>,
+    S: SchemaName,
 {
     fn walk_ast<'b>(&'b self, out: AstPass<'_, 'b, DB>) -> QueryResult<()> {
         walk_ast_intern::<T, U, Op, Ret, DB>(
             out,
             &self.records,
             &self.into_clause,
-            self.schema_name.as_deref(),
+            self.schema_name.as_schema_name(),
             &self.operator,
             &self.returning,
         )
     }
 }
 
-impl<T, U, Op> AsQuery for InsertStatement<T, U, Op, NoReturningClause>
+impl<T, U, Op, S> AsQuery for InsertStatement<T, U, Op, NoReturningClause, S>
 where
     T: Table,
     U: InsertStmtKind,
-    InsertStatement<T, U, Op, ReturningClause<T::AllColumns>>: Query,
+    InsertStatement<T, U, Op, ReturningClause<T::AllColumns>, S>: Query,
     T::AllColumns: SelectableExpression<ReturningQuerySource<U::StmtKind, T>>,
 {
     type SqlType = <Self::Query as Query>::SqlType;
-    type Query = InsertStatement<T, U, Op, ReturningClause<T::AllColumns>>;
+    type Query = InsertStatement<T, U, Op, ReturningClause<T::AllColumns>, S>;
 
     fn as_query(self) -> Self::Query {
         self.returning(T::all_columns())
     }
 }
 
-impl<T, U, Op, Ret> Query for InsertStatement<T, U, Op, ReturningClause<Ret>>
+impl<T, U, Op, Ret, S> Query for InsertStatement<T, U, Op, ReturningClause<Ret>, S>
 where
     T: QuerySource,
     U: InsertStmtKind,
@@ -341,9 +362,9 @@ where
     type SqlType = <Ret as Expression>::SqlType;
 }
 
-impl<T: QuerySource, U, Op, Ret> RunQueryDslSupport for InsertStatement<T, U, Op, Ret> {}
+impl<T: QuerySource, U, Op, Ret, S> RunQueryDslSupport for InsertStatement<T, U, Op, Ret, S> {}
 
-impl<T: QuerySource, U, Op> InsertStatement<T, U, Op> {
+impl<T: QuerySource, U, Op, S> InsertStatement<T, U, Op, NoReturningClause, S> {
     /// Specify what expression is returned after execution of the `insert`.
     /// # Examples
     ///
@@ -369,16 +390,18 @@ impl<T: QuerySource, U, Op> InsertStatement<T, U, Op> {
     /// # #[cfg(not(feature = "postgres"))]
     /// # fn main() {}
     /// ```
-    pub fn returning<E>(self, returns: E) -> InsertStatement<T, U, Op, ReturningClause<E>>
+    pub fn returning<E>(self, returns: E) -> InsertStatement<T, U, Op, ReturningClause<E>, S>
     where
-        InsertStatement<T, U, Op, ReturningClause<E>>: Query,
+        InsertStatement<T, U, Op, ReturningClause<E>, S>: Query,
     {
-        InsertStatement::new(
-            self.target,
-            self.records,
-            self.operator,
-            ReturningClause(returns),
-        )
+        InsertStatement {
+            into_clause: self.into_clause,
+            operator: self.operator,
+            target: self.target,
+            records: self.records,
+            returning: ReturningClause(returns),
+            schema_name: self.schema_name,
+        }
     }
 }
 
@@ -651,6 +674,7 @@ mod private {
         type Op;
         type Values;
         type Ret;
+        type Schema;
     }
 
     impl<T, Op> InsertAutoTypeHelper for crate::query_builder::IncompleteInsertStatement<T, Op> {
@@ -658,9 +682,10 @@ mod private {
         type Op = Op;
         type Values = ();
         type Ret = crate::query_builder::returning::NoReturningClause;
+        type Schema = ();
     }
 
-    impl<T, U, Op, Ret> InsertAutoTypeHelper for InsertStatement<T, U, Op, Ret>
+    impl<T, U, Op, Ret, S> InsertAutoTypeHelper for InsertStatement<T, U, Op, Ret, S>
     where
         T: QuerySource,
     {
@@ -668,5 +693,6 @@ mod private {
         type Op = Op;
         type Values = U;
         type Ret = Ret;
+        type Schema = S;
     }
 }

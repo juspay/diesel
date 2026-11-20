@@ -752,38 +752,38 @@ fn expand(input: TableDecl, kind: QuerySourceMacroKind) -> TokenStream {
                 }
             }
 
-            impl<F, S, D, W, O, L, Of, G> diesel::JoinTo<diesel::internal::table_macro::SelectStatement<diesel::internal::table_macro::FromClause<F>, S, D, W, O, L, Of, G>> for #query_source_ident where
-                diesel::internal::table_macro::SelectStatement<diesel::internal::table_macro::FromClause<F>, S, D, W, O, L, Of, G>: diesel::JoinTo<Self>,
+            impl<F, Schema, S, D, W, O, L, Of, G> diesel::JoinTo<diesel::internal::table_macro::SelectStatement<diesel::internal::table_macro::FromClause<F, Schema>, S, D, W, O, L, Of, G>> for #query_source_ident where
+                diesel::internal::table_macro::SelectStatement<diesel::internal::table_macro::FromClause<F, Schema>, S, D, W, O, L, Of, G>: diesel::JoinTo<Self>,
                 F: diesel::query_source::QuerySource
             {
-                type FromClause = diesel::internal::table_macro::SelectStatement<diesel::internal::table_macro::FromClause<F>, S, D, W, O, L, Of, G>;
-                type OnClause = <diesel::internal::table_macro::SelectStatement<diesel::internal::table_macro::FromClause<F>, S, D, W, O, L, Of, G> as diesel::JoinTo<Self>>::OnClause;
+                type FromClause = diesel::internal::table_macro::SelectStatement<diesel::internal::table_macro::FromClause<F, Schema>, S, D, W, O, L, Of, G>;
+                type OnClause = <diesel::internal::table_macro::SelectStatement<diesel::internal::table_macro::FromClause<F, Schema>, S, D, W, O, L, Of, G> as diesel::JoinTo<Self>>::OnClause;
 
-                fn join_target(__diesel_internal_rhs: diesel::internal::table_macro::SelectStatement<diesel::internal::table_macro::FromClause<F>, S, D, W, O, L, Of, G>) -> (Self::FromClause, Self::OnClause) {
+                fn join_target(__diesel_internal_rhs: diesel::internal::table_macro::SelectStatement<diesel::internal::table_macro::FromClause<F, Schema>, S, D, W, O, L, Of, G>) -> (Self::FromClause, Self::OnClause) {
                     let (_, __diesel_internal_on_clause) = diesel::internal::table_macro::SelectStatement::join_target(Self);
                     (__diesel_internal_rhs, __diesel_internal_on_clause)
                 }
             }
 
-            impl<'a, QS, ST, DB> diesel::JoinTo<diesel::internal::table_macro::BoxedSelectStatement<'a, diesel::internal::table_macro::FromClause<QS>, ST, DB>> for #query_source_ident where
-                diesel::internal::table_macro::BoxedSelectStatement<'a, diesel::internal::table_macro::FromClause<QS>, ST, DB>: diesel::JoinTo<Self>,
+            impl<'a, QS, Schema, ST, DB> diesel::JoinTo<diesel::internal::table_macro::BoxedSelectStatement<'a, diesel::internal::table_macro::FromClause<QS, Schema>, ST, DB>> for #query_source_ident where
+                diesel::internal::table_macro::BoxedSelectStatement<'a, diesel::internal::table_macro::FromClause<QS, Schema>, ST, DB>: diesel::JoinTo<Self>,
                 QS: diesel::query_source::QuerySource,
             {
-                type FromClause = diesel::internal::table_macro::BoxedSelectStatement<'a, diesel::internal::table_macro::FromClause<QS>, ST, DB>;
-                type OnClause = <diesel::internal::table_macro::BoxedSelectStatement<'a, diesel::internal::table_macro::FromClause<QS>, ST, DB> as diesel::JoinTo<Self>>::OnClause;
-                fn join_target(__diesel_internal_rhs: diesel::internal::table_macro::BoxedSelectStatement<'a, diesel::internal::table_macro::FromClause<QS>, ST, DB>) -> (Self::FromClause, Self::OnClause) {
+                type FromClause = diesel::internal::table_macro::BoxedSelectStatement<'a, diesel::internal::table_macro::FromClause<QS, Schema>, ST, DB>;
+                type OnClause = <diesel::internal::table_macro::BoxedSelectStatement<'a, diesel::internal::table_macro::FromClause<QS, Schema>, ST, DB> as diesel::JoinTo<Self>>::OnClause;
+                fn join_target(__diesel_internal_rhs: diesel::internal::table_macro::BoxedSelectStatement<'a, diesel::internal::table_macro::FromClause<QS, Schema>, ST, DB>) -> (Self::FromClause, Self::OnClause) {
                     let (_, __diesel_internal_on_clause) = diesel::internal::table_macro::BoxedSelectStatement::join_target(Self);
                     (__diesel_internal_rhs, __diesel_internal_on_clause)
                 }
             }
 
-            impl<'a, QS, ST, DB> diesel::JoinTo<diesel::internal::table_macro::BoxedCloneSelectStatement<'a, diesel::internal::table_macro::FromClause<QS>, ST, DB>> for #query_source_ident where
-                diesel::internal::table_macro::BoxedCloneSelectStatement<'a, diesel::internal::table_macro::FromClause<QS>, ST, DB>: diesel::JoinTo<Self>,
+            impl<'a, QS, Schema, ST, DB> diesel::JoinTo<diesel::internal::table_macro::BoxedCloneSelectStatement<'a, diesel::internal::table_macro::FromClause<QS, Schema>, ST, DB>> for #query_source_ident where
+                diesel::internal::table_macro::BoxedCloneSelectStatement<'a, diesel::internal::table_macro::FromClause<QS, Schema>, ST, DB>: diesel::JoinTo<Self>,
                 QS: diesel::query_source::QuerySource,
             {
-                type FromClause = diesel::internal::table_macro::BoxedCloneSelectStatement<'a, diesel::internal::table_macro::FromClause<QS>, ST, DB>;
-                type OnClause = <diesel::internal::table_macro::BoxedCloneSelectStatement<'a, diesel::internal::table_macro::FromClause<QS>, ST, DB> as diesel::JoinTo<Self>>::OnClause;
-                fn join_target(__diesel_internal_rhs: diesel::internal::table_macro::BoxedCloneSelectStatement<'a, diesel::internal::table_macro::FromClause<QS>, ST, DB>) -> (Self::FromClause, Self::OnClause) {
+                type FromClause = diesel::internal::table_macro::BoxedCloneSelectStatement<'a, diesel::internal::table_macro::FromClause<QS, Schema>, ST, DB>;
+                type OnClause = <diesel::internal::table_macro::BoxedCloneSelectStatement<'a, diesel::internal::table_macro::FromClause<QS, Schema>, ST, DB> as diesel::JoinTo<Self>>::OnClause;
+                fn join_target(__diesel_internal_rhs: diesel::internal::table_macro::BoxedCloneSelectStatement<'a, diesel::internal::table_macro::FromClause<QS, Schema>, ST, DB>) -> (Self::FromClause, Self::OnClause) {
                     let (_, __diesel_internal_on_clause) = diesel::internal::table_macro::BoxedCloneSelectStatement::join_target(Self);
                     (__diesel_internal_rhs, __diesel_internal_on_clause)
                 }
@@ -1224,9 +1224,10 @@ fn expand_column_def(
 
         // FIXME: Remove this when overlapping marker traits are stable
         #(#cfg_attrs)*
-        impl<From> diesel::SelectableExpression<diesel::internal::table_macro::SelectStatement<diesel::internal::table_macro::FromClause<From>>> for #column_name where
+        impl<From, Schema> diesel::SelectableExpression<diesel::internal::table_macro::SelectStatement<diesel::internal::table_macro::FromClause<From, Schema>>> for #column_name where
             From: diesel::query_source::QuerySource,
-            #column_name: diesel::SelectableExpression<From> + diesel::AppearsOnTable<diesel::internal::table_macro::SelectStatement<diesel::internal::table_macro::FromClause<From>>>,
+            Schema: diesel::internal::table_macro::SchemaName,
+            #column_name: diesel::SelectableExpression<From> + diesel::AppearsOnTable<diesel::internal::table_macro::SelectStatement<diesel::internal::table_macro::FromClause<From, Schema>>>,
         {
         }
 

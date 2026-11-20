@@ -18,7 +18,7 @@ esp-hal = { version = "1.0", features = ["esp32c6", "unstable"] }
 esp-println = { version = "0.16", features = ["esp32c6"] }
 esp-bootloader-esp-idf = { version = "0.2.0", features = ["esp32c6"] }
 # diesel with the no-std target
-diesel = { version = "2.3.0", path = "../../../diesel/", default-features = false, features = ["sqlite-no-std"] }
+diesel = { version = "2.3.0", path = "../../../diesel/", package = "juspay_diesel", default-features = false, features = ["sqlite-no-std"] }
 diesel-dynamic-schema = { path = "../../../diesel_dynamic_schema/", default-features = false, features = ["sqlite-no-std"] }
 # libsqlite to have a bundled build for the target
 # This requires additonally

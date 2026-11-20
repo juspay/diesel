@@ -63,7 +63,7 @@ impl SemverArgs {
         ]);
         self.run_semver_checks_for(
             &metadata,
-            "diesel",
+            "juspay_diesel",
             &[
                 "sqlite",
                 "postgres",

@@ -146,8 +146,8 @@ mod private {
         type GroupBy = GB::Expressions;
     }
 
-    impl<F, S, D, W, O, LOf, GB, H, L> AcceptedQueries
-        for SelectStatement<FromClause<F>, S, D, W, O, LOf, GB, H, L>
+    impl<F, Schema, S, D, W, O, LOf, GB, H, L> AcceptedQueries
+        for SelectStatement<FromClause<F, Schema>, S, D, W, O, LOf, GB, H, L>
     where
         F: QuerySource,
         GB: ValidGroupByClause,
@@ -166,7 +166,8 @@ mod private {
         type GroupBy = GB::Expressions;
     }
 
-    impl<'a, ST, F, DB, GB> AcceptedQueries for BoxedSelectStatement<'a, ST, FromClause<F>, DB, GB>
+    impl<'a, ST, F, Schema, DB, GB> AcceptedQueries
+        for BoxedSelectStatement<'a, ST, FromClause<F, Schema>, DB, GB>
     where
         F: QuerySource,
         GB: ValidGroupByClause,
@@ -185,7 +186,8 @@ mod private {
         type GroupBy = GB::Expressions;
     }
 
-    impl<'a, ST, F, DB, GB> AcceptedQueries for BoxedCloneSelectStatement<'a, ST, FromClause<F>, DB, GB>
+    impl<'a, ST, F, Schema, DB, GB> AcceptedQueries
+        for BoxedCloneSelectStatement<'a, ST, FromClause<F, Schema>, DB, GB>
     where
         F: QuerySource,
         GB: ValidGroupByClause,

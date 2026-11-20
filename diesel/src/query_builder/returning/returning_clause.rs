@@ -71,11 +71,12 @@ pub trait ReturningClauseHelper<S> {
     type WithReturning;
 }
 
-impl<S, T, U, Op> ReturningClauseHelper<S> for InsertStatement<T, U, Op>
+impl<S, T, U, Op, Schema> ReturningClauseHelper<S>
+    for InsertStatement<T, U, Op, NoReturningClause, Schema>
 where
     T: QuerySource,
 {
-    type WithReturning = InsertStatement<T, U, Op, ReturningClause<S>>;
+    type WithReturning = InsertStatement<T, U, Op, ReturningClause<S>, Schema>;
 }
 
 impl<S, T, U, V> ReturningClauseHelper<S> for UpdateStatement<T, U, V>
@@ -85,9 +86,9 @@ where
     type WithReturning = UpdateStatement<T, U, V, ReturningClause<S>>;
 }
 
-impl<S, T, U> ReturningClauseHelper<S> for DeleteStatement<T, U>
+impl<S, T, U, Schema> ReturningClauseHelper<S> for DeleteStatement<T, U, NoReturningClause, Schema>
 where
     T: QuerySource,
 {
-    type WithReturning = DeleteStatement<T, U, ReturningClause<S>>;
+    type WithReturning = DeleteStatement<T, U, ReturningClause<S>, Schema>;
 }

@@ -12,7 +12,7 @@ pub trait SchemaNameDsl {
     type Output;
 
     /// See the trait documentation
-    fn schema_name(self, schema_name: &'_ String) -> Self::Output;
+    fn schema_name(self, schema_name: &str) -> Self::Output;
 }
 
 impl<T> SchemaNameDsl for T
@@ -22,7 +22,7 @@ where
 {
     type Output = <T::Query as SchemaNameDsl>::Output;
 
-    fn schema_name(self, schema_name: &'_ String) -> Self::Output {
+    fn schema_name(self, schema_name: &str) -> Self::Output {
         self.as_query().schema_name(schema_name)
     }
 }

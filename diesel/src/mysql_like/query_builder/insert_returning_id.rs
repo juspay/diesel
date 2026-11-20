@@ -8,7 +8,7 @@ use crate::query_builder::{InsertStatement, QueryFragment, QueryId, SingleRowIns
 use crate::query_source::{AutoIncrementTable, QuerySource};
 use crate::result::QueryResult;
 
-impl<T: QuerySource, U, Op, Ret> InsertStatement<T, U, Op, Ret> {
+impl<T: QuerySource, U, Op, Ret, S> InsertStatement<T, U, Op, Ret, S> {
     /// Executes this insert and returns the `AUTO_INCREMENT` value it set, or
     /// `None` if it set none. The value comes from [`mysql_stmt_insert_id`],
     /// read straight from the executed statement, so it needs neither a

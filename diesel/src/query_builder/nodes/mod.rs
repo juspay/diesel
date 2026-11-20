@@ -78,4 +78,15 @@ where
         self.rhs.walk_ast(out.reborrow())?;
         Ok(())
     }
+
+    fn walk_ast_with_schema<'b>(
+        &'b self,
+        schema: &str,
+        mut out: AstPass<'_, 'b, DB>,
+    ) -> QueryResult<()> {
+        self.lhs.walk_ast_with_schema(schema, out.reborrow())?;
+        self.middle.push_sql(out.reborrow());
+        self.rhs.walk_ast(out.reborrow())?;
+        Ok(())
+    }
 }

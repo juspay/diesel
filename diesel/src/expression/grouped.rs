@@ -23,6 +23,17 @@ where
         out.push_sql(")");
         Ok(())
     }
+
+    fn walk_ast_with_schema<'b>(
+        &'b self,
+        schema: &str,
+        mut out: AstPass<'_, 'b, DB>,
+    ) -> QueryResult<()> {
+        out.push_sql("(");
+        self.0.walk_ast_with_schema(schema, out.reborrow())?;
+        out.push_sql(")");
+        Ok(())
+    }
 }
 
 impl_selectable_expression!(Grouped<T>);

@@ -9,6 +9,7 @@ use crate::expression::{
     AppearsOnTable, AsExpression, Expression, SelectableExpression, ValidGrouping, is_aggregate,
 };
 use crate::expression_methods::{EqAll, ExpressionMethods};
+use crate::query_builder::from_clause::SchemaName;
 use crate::query_builder::{AstPass, FromClause, QueryFragment, QueryId, SelectStatement};
 use crate::query_source::{AppearsInFromClause, Once, QueryRelationField, QuerySource};
 use crate::result::QueryResult;
@@ -102,10 +103,12 @@ where
 }
 
 // FIXME: Remove this when overlapping marker traits are stable
-impl<From, S, C> SelectableExpression<SelectStatement<FromClause<From>>> for AliasedField<S, C>
+impl<From, Schema, S, C> SelectableExpression<SelectStatement<FromClause<From, Schema>>>
+    for AliasedField<S, C>
 where
-    Self: SelectableExpression<From> + AppearsOnTable<SelectStatement<FromClause<From>>>,
+    Self: SelectableExpression<From> + AppearsOnTable<SelectStatement<FromClause<From, Schema>>>,
     From: QuerySource,
+    Schema: SchemaName,
 {
 }
 
