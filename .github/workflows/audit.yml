@@ -2,15 +2,29 @@ name: Security audit
 on:
   push:
     paths:
-      - '**/Cargo.toml'
-      - '**/Cargo.lock'
+      - "**/Cargo.toml"
+      - "**/Cargo.lock"
+      - "deny.toml"
+      - ".github/workflows/audit.yml"
   schedule:
-    - cron: '0 0 */7 * *'
+    - cron: "0 0 */7 * *"
+
+permissions:
+  contents: "read"
+concurrency:
+  cancel-in-progress: true
+  group: ${{ github.ref }}-${{ github.workflow }}
 jobs:
   security_audit:
+    name: Security Audit
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions-rust-lang/audit@v1
+      - uses: actions/checkout@v7.0.1
         with:
-          token: ${{ secrets.GITHUB_TOKEN }}
+          persist-credentials: false
+      - uses: taiki-e/install-action@v2.87.13
+        with:
+          tool: cargo-deny
+      - run: |
+          cargo update -p libsqlite3-sys
+          cargo deny check

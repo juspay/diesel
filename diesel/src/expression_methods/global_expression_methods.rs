@@ -2,8 +2,8 @@ use crate::dsl;
 use crate::expression::array_comparison::{AsInExpression, In, NotIn};
 use crate::expression::grouped::Grouped;
 use crate::expression::operators::*;
-use crate::expression::{assume_not_null, nullable, AsExpression, Expression};
-use crate::sql_types::{SingleValue, SqlType};
+use crate::expression::{AsExpression, Expression, assume_not_null, cast, nullable};
+use crate::sql_types::{SingleValue, SqlType, Untyped};
 
 /// Methods present on all expressions, except tuples
 pub trait ExpressionMethods: Expression + Sized {
@@ -12,21 +12,20 @@ pub trait ExpressionMethods: Expression + Sized {
     /// Note that this function follows SQL semantics around `None`/`null` values,
     /// so `eq(None)` will never match. Use [`is_null`](ExpressionMethods::is_null()) instead.
     ///
-    ///
     #[cfg_attr(
-        any(feature = "sqlite", feature = "postgres"),
+        any(feature = "__sqlite-shared", feature = "postgres"),
         doc = "To get behavior that is more like the Rust `=` operator you can also use the"
     )]
     #[cfg_attr(
-        feature = "sqlite",
+        feature = "__sqlite-shared",
         doc = "sqlite-specific [`is`](crate::SqliteExpressionMethods::is())"
     )]
-    #[cfg_attr(all(feature = "sqlite", feature = "postgres"), doc = "or the")]
+    #[cfg_attr(all(feature = "__sqlite-shared", feature = "postgres"), doc = "or the")]
     #[cfg_attr(
         feature = "postgres",
         doc = "postgres-specific [`is_not_distinct_from`](crate::PgExpressionMethods::is_not_distinct_from())"
     )]
-    #[cfg_attr(any(feature = "sqlite", feature = "postgres"), doc = ".")]
+    #[cfg_attr(any(feature = "__sqlite-shared", feature = "postgres"), doc = ".")]
     ///
     /// # Example
     ///
@@ -45,6 +44,11 @@ pub trait ExpressionMethods: Expression + Sized {
     /// ```rust
     /// # include!("../doctest_setup.rs");
     /// #
+    /// # // Reading the query result requires reading memory allocated by the
+    /// # // native sqlite library, which miri cannot track provenance for.
+    /// # #[cfg(miri)]
+    /// # fn main() {}
+    /// # #[cfg(not(miri))]
     /// # fn main() {
     /// #     run_test().unwrap();
     /// # }
@@ -122,18 +126,27 @@ pub trait ExpressionMethods: Expression + Sized {
     /// #     let connection = &mut establish_connection();
     /// #     diesel::sql_query("INSERT INTO users (name) VALUES
     /// #         ('Jim')").execute(connection).unwrap();
-    /// let data = users::table.select(users::id).filter(users::name.eq_any(vec!["Sean", "Jim"]));
+    /// let data = users::table
+    ///     .select(users::id)
+    ///     .filter(users::name.eq_any(vec!["Sean", "Jim"]));
     /// assert_eq!(Ok(vec![1, 3]), data.load(connection));
     ///
     /// // Calling `eq_any` with an empty array is the same as doing `WHERE 1=0`
-    /// let data = users::table.select(users::id).filter(users::name.eq_any(Vec::<String>::new()));
+    /// let data = users::table
+    ///     .select(users::id)
+    ///     .filter(users::name.eq_any(Vec::<String>::new()));
     /// assert_eq!(Ok(vec![]), data.load::<i32>(connection));
     ///
     /// // Calling `eq_any` with a subquery is the same as using
     /// // `WHERE {column} IN {subquery}`.
     ///
-    /// let subquery = users::table.filter(users::name.eq("Sean")).select(users::id).into_boxed();
-    /// let data = posts::table.select(posts::id).filter(posts::user_id.eq_any(subquery));
+    /// let subquery = users::table
+    ///     .filter(users::name.eq("Sean"))
+    ///     .select(users::id)
+    ///     .into_boxed();
+    /// let data = posts::table
+    ///     .select(posts::id)
+    ///     .filter(posts::user_id.eq_any(subquery));
     /// assert_eq!(Ok(vec![1, 2]), data.load::<i32>(connection));
     ///
     /// # }
@@ -193,6 +206,11 @@ pub trait ExpressionMethods: Expression + Sized {
     /// ```rust
     /// # include!("../doctest_setup.rs");
     /// #
+    /// # // Reading the query result requires reading memory allocated by the
+    /// # // native sqlite library, which miri cannot track provenance for.
+    /// # #[cfg(miri)]
+    /// # fn main() {}
+    /// # #[cfg(not(miri))]
     /// # fn main() {
     /// #     run_test().unwrap();
     /// # }
@@ -225,6 +243,11 @@ pub trait ExpressionMethods: Expression + Sized {
     /// ```rust
     /// # include!("../doctest_setup.rs");
     /// #
+    /// # // Reading the query result requires reading memory allocated by the
+    /// # // native sqlite library, which miri cannot track provenance for.
+    /// # #[cfg(miri)]
+    /// # fn main() {}
+    /// # #[cfg(not(miri))]
     /// # fn main() {
     /// #     run_test().unwrap();
     /// # }
@@ -257,6 +280,11 @@ pub trait ExpressionMethods: Expression + Sized {
     /// ```rust
     /// # include!("../doctest_setup.rs");
     /// #
+    /// # // Reading the query result requires reading memory allocated by the
+    /// # // native sqlite library, which miri cannot track provenance for.
+    /// # #[cfg(miri)]
+    /// # fn main() {}
+    /// # #[cfg(not(miri))]
     /// # fn main() {
     /// #     run_test().unwrap();
     /// # }
@@ -288,6 +316,11 @@ pub trait ExpressionMethods: Expression + Sized {
     /// ```rust
     /// # include!("../doctest_setup.rs");
     /// #
+    /// # // Reading the query result requires reading memory allocated by the
+    /// # // native sqlite library, which miri cannot track provenance for.
+    /// # #[cfg(miri)]
+    /// # fn main() {}
+    /// # #[cfg(not(miri))]
     /// # fn main() {
     /// #     run_test().unwrap();
     /// # }
@@ -319,6 +352,11 @@ pub trait ExpressionMethods: Expression + Sized {
     /// ```rust
     /// # include!("../doctest_setup.rs");
     /// #
+    /// # // Reading the query result requires reading memory allocated by the
+    /// # // native sqlite library, which miri cannot track provenance for.
+    /// # #[cfg(miri)]
+    /// # fn main() {}
+    /// # #[cfg(not(miri))]
     /// # fn main() {
     /// #     run_test().unwrap();
     /// # }
@@ -350,6 +388,11 @@ pub trait ExpressionMethods: Expression + Sized {
     /// ```rust
     /// # include!("../doctest_setup.rs");
     /// #
+    /// # // Reading the query result requires reading memory allocated by the
+    /// # // native sqlite library, which miri cannot track provenance for.
+    /// # #[cfg(miri)]
+    /// # fn main() {}
+    /// # #[cfg(not(miri))]
     /// # fn main() {
     /// #     run_test().unwrap();
     /// # }
@@ -382,6 +425,11 @@ pub trait ExpressionMethods: Expression + Sized {
     /// ```rust
     /// # include!("../doctest_setup.rs");
     /// #
+    /// # // Reading the query result requires reading memory allocated by the
+    /// # // native sqlite library, which miri cannot track provenance for.
+    /// # #[cfg(miri)]
+    /// # fn main() {}
+    /// # #[cfg(not(miri))]
     /// # fn main() {
     /// #     use schema::animals::dsl::*;
     /// #     let connection = &mut establish_connection();
@@ -414,6 +462,11 @@ pub trait ExpressionMethods: Expression + Sized {
     /// ```rust
     /// # include!("../doctest_setup.rs");
     /// #
+    /// # // Reading the query result requires reading memory allocated by the
+    /// # // native sqlite library, which miri cannot track provenance for.
+    /// # #[cfg(miri)]
+    /// # fn main() {}
+    /// # #[cfg(not(miri))]
     /// # fn main() {
     /// #     run_test().unwrap();
     /// # }
@@ -442,6 +495,86 @@ pub trait ExpressionMethods: Expression + Sized {
         ))
     }
 
+    /// Generates a `CAST(expr AS sql_type)` expression
+    ///
+    /// It is necessary that the expression's SQL type can be casted to the
+    /// target SQL type (represented by the [`CastsTo`](cast::CastsTo) trait),
+    /// and that we know how the corresponding SQL type is named for the
+    /// specific backend (represented by the
+    /// [`KnownCastSqlTypeName`](cast::KnownCastSqlTypeName) trait).
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// # include!("../doctest_setup.rs");
+    /// #
+    /// # // Reading the query result requires reading memory allocated by the
+    /// # // native sqlite library, which miri cannot track provenance for.
+    /// # #[cfg(miri)]
+    /// # fn main() {}
+    /// # #[cfg(not(miri))]
+    /// # fn main() {
+    /// #     run_test().unwrap();
+    /// # }
+    /// #
+    /// # fn run_test() -> QueryResult<()> {
+    /// #     use schema::animals::dsl::*;
+    /// #     let connection = &mut establish_connection();
+    /// #
+    /// use diesel::sql_types;
+    ///
+    /// let data = diesel::select(
+    ///     12_i32
+    ///         .into_sql::<sql_types::Int4>()
+    ///         .cast::<sql_types::Text>(),
+    /// )
+    /// .first::<String>(connection)?;
+    /// assert_eq!("12", data);
+    /// #     Ok(())
+    /// # }
+    /// ```
+    fn cast<ST>(self) -> dsl::Cast<Self, ST>
+    where
+        ST: SingleValue,
+        Self::SqlType: cast::CastsTo<ST>,
+    {
+        cast::Cast::new(self)
+    }
+
+    /// Generates a `CAST(expr AS sql_type)` expression, this version does not check the castability, like [`cast()`](Self::cast).
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// # include!("../doctest_setup.rs");
+    /// #
+    /// # fn main() {
+    /// #     run_test().unwrap();
+    /// # }
+    /// #
+    /// # fn run_test() -> QueryResult<()> {
+    /// #     use schema::animals::dsl::*;
+    /// #     let connection = &mut establish_connection();
+    /// #
+    /// use diesel::sql_types;
+    ///
+    /// let data = diesel::select(
+    ///     "12".into_sql::<sql_types::Text>()
+    ///         .fallible_cast::<sql_types::Int8>(),
+    /// )
+    /// .first::<i64>(connection)?;
+    /// assert_eq!(12i64, data);
+    /// #     Ok(())
+    /// # }
+    /// ```
+    fn fallible_cast<ST>(self) -> dsl::Cast<Self, ST>
+    where
+        ST: SingleValue,
+        Self::SqlType: cast::FallibleCastsTo<ST>,
+    {
+        cast::Cast::new(self)
+    }
+
     /// Creates a SQL `DESC` expression, representing this expression in
     /// descending order.
     ///
@@ -450,6 +583,11 @@ pub trait ExpressionMethods: Expression + Sized {
     /// ```rust
     /// # include!("../doctest_setup.rs");
     /// #
+    /// # // Reading the query result requires reading memory allocated by the
+    /// # // native sqlite library, which miri cannot track provenance for.
+    /// # #[cfg(miri)]
+    /// # fn main() {}
+    /// # #[cfg(not(miri))]
     /// # fn main() {
     /// #     run_test().unwrap();
     /// # }
@@ -506,6 +644,163 @@ where
 {
 }
 
+/// Methods present on untyped expressions.
+///
+/// This trait is implemented for expressions where the sql type is [`Untyped`].
+/// This allows calling common operators on these expressions.
+///
+/// This trait is primarily meant to be used for untyped queries in
+/// [`diesel_dynamic_schema`](https://docs.rs/diesel-dynamic-schema/latest/diesel_dynamic_schema/).
+pub trait UntypedExpressionMethods: Sized {
+    /// Creates a SQL `IS NULL` expression.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// # include!("../doctest_setup.rs");
+    /// #
+    /// # // Reading the query result requires reading memory allocated by the
+    /// # // native sqlite library, which miri cannot track provenance for.
+    /// # #[cfg(miri)]
+    /// # fn main() {}
+    /// # #[cfg(not(miri))]
+    /// # fn main() {
+    /// #     run_test().unwrap();
+    /// # }
+    /// #
+    /// # fn run_test() -> QueryResult<()> {
+    /// #     use schema::animals::dsl::*;
+    /// #     let connection = &mut establish_connection();
+    /// #
+    /// use diesel::sql_types::Untyped;
+    /// use diesel::dsl::sql;
+    ///
+    /// let data = animals
+    ///     .select(species)
+    ///     .filter(sql::<Untyped>("name").is_null())
+    ///     .first::<String>(connection)?;
+    /// assert_eq!("spider", data);
+    /// #     Ok(())
+    /// # }
+    /// ```
+    #[allow(clippy::wrong_self_convention)]
+    fn is_null(self) -> dsl::IsNull<Self> {
+        Grouped(IsNull::new(self))
+    }
+
+    /// Creates a SQL `IS NOT NULL` expression.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// # include!("../doctest_setup.rs");
+    /// #
+    /// # // Reading the query result requires reading memory allocated by the
+    /// # // native sqlite library, which miri cannot track provenance for.
+    /// # #[cfg(miri)]
+    /// # fn main() {}
+    /// # #[cfg(not(miri))]
+    /// # fn main() {
+    /// #     run_test().unwrap();
+    /// # }
+    /// #
+    /// # fn run_test() -> QueryResult<()> {
+    /// #     use schema::animals::dsl::*;
+    /// #     let connection = &mut establish_connection();
+    /// #
+    /// use diesel::sql_types::Untyped;
+    /// use diesel::dsl::sql;
+    ///
+    /// let data = animals
+    ///     .select(species)
+    ///     .filter(sql::<Untyped>("name").is_not_null())
+    ///     .first::<String>(connection)?;
+    /// assert_eq!("dog", data);
+    /// #     Ok(())
+    /// # }
+    /// ```
+    #[allow(clippy::wrong_self_convention)]
+    fn is_not_null(self) -> dsl::IsNotNull<Self> {
+        Grouped(IsNotNull::new(self))
+    }
+
+    /// Creates a SQL `DESC` expression, representing this expression in
+    /// descending order.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// # include!("../doctest_setup.rs");
+    /// #
+    /// # // Reading the query result requires reading memory allocated by the
+    /// # // native sqlite library, which miri cannot track provenance for.
+    /// # #[cfg(miri)]
+    /// # fn main() {}
+    /// # #[cfg(not(miri))]
+    /// # fn main() {
+    /// #     run_test().unwrap();
+    /// # }
+    /// #
+    /// # fn run_test() -> QueryResult<()> {
+    /// #     use schema::users::dsl::*;
+    /// #     let connection = &mut establish_connection();
+    /// #
+    /// use diesel::sql_types::Untyped;
+    /// use diesel::dsl::sql;
+    ///
+    /// let data = users
+    ///     .select(name)
+    ///     .order(sql::<Untyped>("name").desc())
+    ///     .load::<String>(connection)?;
+    /// let expected = vec!["Tess", "Sean"];
+    /// assert_eq!(expected, data);
+    /// #     Ok(())
+    /// # }
+    /// ```
+    fn desc(self) -> dsl::Desc<Self> {
+        Desc::new(self)
+    }
+
+    /// Creates a SQL `ASC` expression, representing this expression in
+    /// ascending order.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// # include!("../doctest_setup.rs");
+    /// #
+    /// # // Reading the query result requires reading memory allocated by the
+    /// # // native sqlite library, which miri cannot track provenance for.
+    /// # #[cfg(miri)]
+    /// # fn main() {}
+    /// # #[cfg(not(miri))]
+    /// # fn main() {
+    /// #     run_test().unwrap();
+    /// # }
+    /// #
+    /// # fn run_test() -> QueryResult<()> {
+    /// #     use schema::users::dsl::*;
+    /// #     let connection = &mut establish_connection();
+    /// #
+    /// use diesel::sql_types::Untyped;
+    /// use diesel::dsl::sql;
+    ///
+    /// let data = users
+    ///     .select(name)
+    ///     .order(sql::<Untyped>("name").asc())
+    ///     .load::<String>(connection)?;
+    /// let expected = vec!["Sean", "Tess"];
+    /// assert_eq!(expected, data);
+    /// #     Ok(())
+    /// # }
+    /// ```
+    fn asc(self) -> dsl::Asc<Self> {
+        Asc::new(self)
+    }
+}
+
+impl<T> UntypedExpressionMethods for T where T: Expression<SqlType = Untyped> {}
+
 /// Methods present on all expressions
 pub trait NullableExpressionMethods: Expression + Sized {
     /// Converts this potentially non-null expression into one which is treated
@@ -531,11 +826,12 @@ pub trait NullableExpressionMethods: Expression + Sized {
     /// # allow_tables_to_appear_in_same_query!(posts, users);
     ///
     /// fn main() {
+    ///     use self::posts::dsl::{author_name, posts};
     ///     use self::users::dsl::*;
-    ///     use self::posts::dsl::{posts, author_name};
     ///     let connection = &mut establish_connection();
     ///
-    ///     let data = users.inner_join(posts)
+    ///     let data = users
+    ///         .inner_join(posts)
     ///         .filter(name.nullable().eq(author_name))
     ///         .select(name)
     ///         .load::<String>(connection);
@@ -571,6 +867,11 @@ pub trait NullableExpressionMethods: Expression + Sized {
     ///     }
     /// }
     ///
+    /// # // Reading the query result requires reading memory allocated by the
+    /// # // native sqlite library, which miri cannot track provenance for.
+    /// #[cfg(miri)]
+    /// fn main() {}
+    /// #[cfg(not(miri))]
     /// fn main() {
     ///     use self::animals::dsl::*;
     ///     let connection = &mut establish_connection();
@@ -598,6 +899,11 @@ pub trait NullableExpressionMethods: Expression + Sized {
     ///     }
     /// }
     ///
+    /// # // Reading the query result requires reading memory allocated by the
+    /// # // native sqlite library, which miri cannot track provenance for.
+    /// #[cfg(miri)]
+    /// fn main() {}
+    /// #[cfg(not(miri))]
     /// fn main() {
     ///     use diesel::result::{Error, UnexpectedNullError};
     ///     use self::animals::dsl::*;
@@ -636,6 +942,11 @@ pub trait NullableExpressionMethods: Expression + Sized {
     /// # joinable!(posts -> users (user_id));
     /// # allow_tables_to_appear_in_same_query!(posts, users);
     ///
+    /// # // Reading the query result requires reading memory allocated by the
+    /// # // native sqlite library, which miri cannot track provenance for.
+    /// #[cfg(miri)]
+    /// fn main() {}
+    /// #[cfg(not(miri))]
     /// fn main() {
     ///     use self::posts;
     ///     use self::users;
@@ -648,8 +959,12 @@ pub trait NullableExpressionMethods: Expression + Sized {
     /// #       .set(posts::author_name.eq("Sean"))
     /// #       .execute(connection);
     ///
-    ///     let result = posts::table.left_join(users::table)
-    ///         .select((posts::id, (users::id, posts::author_name.assume_not_null()).nullable()))
+    ///     let result = posts::table
+    ///         .left_join(users::table)
+    ///         .select((
+    ///             posts::id,
+    ///             (users::id, posts::author_name.assume_not_null()).nullable(),
+    ///         ))
     ///         .order_by(posts::id)
     ///         .load::<(i32, Option<(i32, String)>)>(connection);
     ///     let expected = Ok(vec![

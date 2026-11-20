@@ -55,7 +55,7 @@ struct HasCustomTypes {
     custom_enum: MyEnum,
 }
 
-#[test]
+#[diesel_test_helper::test]
 fn custom_types_round_trip() {
     let data = vec![
         HasCustomTypes {
@@ -134,7 +134,7 @@ struct HasCustomTypesInCustomSchema {
     custom_enum: MyEnumInCustomSchema,
 }
 
-#[test]
+#[diesel_test_helper::test]
 fn custom_types_in_custom_schema_round_trip() {
     let data = vec![
         HasCustomTypesInCustomSchema {
@@ -179,7 +179,7 @@ struct PublicTy;
 #[diesel(postgres_type(name = "ty"))]
 struct InferredTy;
 
-#[test]
+#[diesel_test_helper::test]
 fn custom_type_schema_inference() {
     use diesel::sql_types::HasSqlType;
 
@@ -205,10 +205,6 @@ fn custom_type_schema_inference() {
     let other_ty = <Pg as HasSqlType<OtherTy>>::metadata(conn);
     let public_ty = <Pg as HasSqlType<PublicTy>>::metadata(conn);
     let inferred_ty = <Pg as HasSqlType<InferredTy>>::metadata(conn);
-    let _ = dbg!(other_ty.oid());
-    let _ = dbg!(public_ty.oid());
-    let _ = dbg!(inferred_ty.oid());
-
     assert_eq!(other_ty.oid().unwrap(), inferred_ty.oid().unwrap());
     assert_ne!(public_ty.oid().unwrap(), other_ty.oid().unwrap());
 }

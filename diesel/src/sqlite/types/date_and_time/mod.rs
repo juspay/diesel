@@ -1,99 +1,109 @@
 use crate::deserialize::{self, FromSql};
 use crate::serialize::{self, Output, ToSql};
 use crate::sql_types;
-use crate::sqlite::connection::SqliteValue;
 use crate::sqlite::Sqlite;
+use crate::sqlite::connection::SqliteValue;
+use alloc::string::String;
 
 #[cfg(feature = "chrono")]
 mod chrono;
 #[cfg(feature = "time")]
 mod time;
 
-#[cfg(feature = "sqlite")]
+#[cfg(feature = "__sqlite-shared")]
 impl FromSql<sql_types::Date, Sqlite> for String {
     fn from_sql(value: SqliteValue<'_, '_, '_>) -> deserialize::Result<Self> {
         FromSql::<sql_types::Text, Sqlite>::from_sql(value)
     }
 }
 
-#[cfg(feature = "sqlite")]
+#[cfg(feature = "__sqlite-shared")]
 impl ToSql<sql_types::Date, Sqlite> for str {
     fn to_sql<'b>(&'b self, out: &mut Output<'b, '_, Sqlite>) -> serialize::Result {
         ToSql::<sql_types::Text, Sqlite>::to_sql(self, out)
     }
 }
 
-#[cfg(feature = "sqlite")]
+#[cfg(feature = "__sqlite-shared")]
 impl ToSql<sql_types::Date, Sqlite> for String {
     fn to_sql<'b>(&'b self, out: &mut Output<'b, '_, Sqlite>) -> serialize::Result {
         <str as ToSql<sql_types::Date, Sqlite>>::to_sql(self as &str, out)
     }
 }
 
-#[cfg(feature = "sqlite")]
+#[cfg(feature = "__sqlite-shared")]
 impl FromSql<sql_types::Time, Sqlite> for String {
     fn from_sql(value: SqliteValue<'_, '_, '_>) -> deserialize::Result<Self> {
         FromSql::<sql_types::Text, Sqlite>::from_sql(value)
     }
 }
 
-#[cfg(feature = "sqlite")]
+#[cfg(feature = "__sqlite-shared")]
 impl ToSql<sql_types::Time, Sqlite> for str {
     fn to_sql<'b>(&'b self, out: &mut Output<'b, '_, Sqlite>) -> serialize::Result {
         ToSql::<sql_types::Text, Sqlite>::to_sql(self, out)
     }
 }
 
-#[cfg(feature = "sqlite")]
+#[cfg(feature = "__sqlite-shared")]
 impl ToSql<sql_types::Time, Sqlite> for String {
     fn to_sql<'b>(&'b self, out: &mut Output<'b, '_, Sqlite>) -> serialize::Result {
         <str as ToSql<sql_types::Time, Sqlite>>::to_sql(self as &str, out)
     }
 }
 
-#[cfg(feature = "sqlite")]
+#[cfg(feature = "__sqlite-shared")]
 impl FromSql<sql_types::Timestamp, Sqlite> for String {
     fn from_sql(value: SqliteValue<'_, '_, '_>) -> deserialize::Result<Self> {
         FromSql::<sql_types::Text, Sqlite>::from_sql(value)
     }
 }
 
-#[cfg(feature = "sqlite")]
+#[cfg(feature = "__sqlite-shared")]
 impl ToSql<sql_types::Timestamp, Sqlite> for str {
     fn to_sql<'b>(&'b self, out: &mut Output<'b, '_, Sqlite>) -> serialize::Result {
         ToSql::<sql_types::Text, Sqlite>::to_sql(self, out)
     }
 }
 
-#[cfg(feature = "sqlite")]
+#[cfg(feature = "__sqlite-shared")]
 impl ToSql<sql_types::Timestamp, Sqlite> for String {
     fn to_sql<'b>(&'b self, out: &mut Output<'b, '_, Sqlite>) -> serialize::Result {
         <str as ToSql<sql_types::Timestamp, Sqlite>>::to_sql(self as &str, out)
     }
 }
 
-#[cfg(feature = "sqlite")]
+#[cfg(feature = "__sqlite-shared")]
 impl FromSql<sql_types::TimestamptzSqlite, Sqlite> for String {
     fn from_sql(value: SqliteValue<'_, '_, '_>) -> deserialize::Result<Self> {
         FromSql::<sql_types::Text, Sqlite>::from_sql(value)
     }
 }
 
-#[cfg(feature = "sqlite")]
+#[cfg(feature = "__sqlite-shared")]
 impl ToSql<sql_types::TimestamptzSqlite, Sqlite> for str {
     fn to_sql<'b>(&'b self, out: &mut Output<'b, '_, Sqlite>) -> serialize::Result {
         ToSql::<sql_types::Text, Sqlite>::to_sql(self, out)
     }
 }
 
-#[cfg(feature = "sqlite")]
+#[cfg(feature = "__sqlite-shared")]
 impl ToSql<sql_types::TimestamptzSqlite, Sqlite> for String {
     fn to_sql<'b>(&'b self, out: &mut Output<'b, '_, Sqlite>) -> serialize::Result {
         <str as ToSql<sql_types::TimestamptzSqlite, Sqlite>>::to_sql(self as &str, out)
     }
 }
 
-#[cfg(all(test, feature = "chrono", feature = "time"))]
+// Every test in this module decodes query results, which requires reading
+// memory allocated by the native sqlite library. Miri cannot track the
+// provenance of that memory when using `-Zmiri-native-lib`.
+#[cfg(all(
+    test,
+    feature = "chrono",
+    feature = "time",
+    not(miri),
+    not(all(target_family = "wasm", target_os = "unknown"))
+))]
 #[allow(clippy::cast_possible_truncation)] // it's a test
 mod tests {
     extern crate chrono;
@@ -103,8 +113,8 @@ mod tests {
         DateTime, Datelike, FixedOffset, NaiveDate, NaiveDateTime, NaiveTime, Timelike, Utc,
     };
     use time::{
-        macros::{date, datetime, offset, time},
         Date, OffsetDateTime, PrimitiveDateTime, Time,
+        macros::{date, datetime, offset, time},
     };
 
     use crate::insert_into;
@@ -181,7 +191,7 @@ mod tests {
             .unwrap();
     }
 
-    #[test]
+    #[diesel_test_helper::test]
     fn time_to_chrono_date() {
         let conn = &mut connection();
         create_tables(conn);
@@ -201,7 +211,7 @@ mod tests {
         assert!(eq_date(original, translated))
     }
 
-    #[test]
+    #[diesel_test_helper::test]
     fn chrono_to_time_date() {
         let conn = &mut connection();
         create_tables(conn);
@@ -221,7 +231,7 @@ mod tests {
         assert!(eq_date(translated, original))
     }
 
-    #[test]
+    #[diesel_test_helper::test]
     fn time_to_chrono_time() {
         let conn = &mut connection();
         create_tables(conn);
@@ -241,7 +251,7 @@ mod tests {
         assert!(eq_time(original, translated))
     }
 
-    #[test]
+    #[diesel_test_helper::test]
     fn chrono_to_time_time() {
         let conn = &mut connection();
         create_tables(conn);
@@ -261,7 +271,7 @@ mod tests {
         assert!(eq_time(translated, original))
     }
 
-    #[test]
+    #[diesel_test_helper::test]
     fn time_to_chrono_datetime() {
         let conn = &mut connection();
         create_tables(conn);
@@ -284,7 +294,7 @@ mod tests {
         assert!(eq_datetime(original, translated))
     }
 
-    #[test]
+    #[diesel_test_helper::test]
     fn chrono_to_time_datetime() {
         let conn = &mut connection();
         create_tables(conn);
@@ -310,7 +320,7 @@ mod tests {
         assert!(eq_datetime(translated, original))
     }
 
-    #[test]
+    #[diesel_test_helper::test]
     fn chrono_to_time_datetime_utc() {
         let conn = &mut connection();
         create_tables(conn);
@@ -333,7 +343,7 @@ mod tests {
         assert!(eq_datetime_utc(translated, original))
     }
 
-    #[test]
+    #[diesel_test_helper::test]
     fn time_to_chrono_datetime_utc() {
         let conn = &mut connection();
         create_tables(conn);
@@ -356,7 +366,7 @@ mod tests {
         assert!(eq_datetime_utc(original, translated))
     }
 
-    #[test]
+    #[diesel_test_helper::test]
     fn chrono_to_time_datetime_timezone() {
         let conn = &mut connection();
         create_tables(conn);
@@ -379,7 +389,7 @@ mod tests {
         assert!(eq_datetime_offset(translated, original))
     }
 
-    #[test]
+    #[diesel_test_helper::test]
     fn time_to_chrono_datetime_offset() {
         let conn = &mut connection();
         create_tables(conn);

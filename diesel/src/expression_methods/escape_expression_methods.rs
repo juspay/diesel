@@ -1,8 +1,9 @@
 use crate::dsl;
+use crate::expression::IntoSql;
 use crate::expression::grouped::Grouped;
 use crate::expression::operators::{Escape, Like, NotLike};
-use crate::expression::IntoSql;
 use crate::sql_types::VarChar;
+use alloc::string::ToString;
 
 /// Adds the `escape` method to `LIKE` and `NOT LIKE`. This is used to specify
 /// the escape character for the pattern.
@@ -15,20 +16,30 @@ use crate::sql_types::VarChar;
 /// ```rust
 /// # include!("../doctest_setup.rs");
 /// #
+/// # // Reading the query result requires reading memory allocated by the
+/// # // native sqlite library, which miri cannot track provenance for.
+/// # #[cfg(miri)]
+/// # fn main() {}
+/// # #[cfg(not(miri))]
 /// # fn main() {
 /// #     use schema::users::dsl::*;
 /// #     use diesel::insert_into;
 /// #     let connection = &mut establish_connection();
 /// #     insert_into(users).values(name.eq("Ha%%0r"))
 /// #         .execute(connection).unwrap();
-/// let users_with_percent = users.select(name)
+/// let users_with_percent = users
+///     .select(name)
 ///     .filter(name.like("%😀%%").escape('😀'))
 ///     .load(connection);
-/// let users_without_percent = users.select(name)
+/// let users_without_percent = users
+///     .select(name)
 ///     .filter(name.not_like("%a%%").escape('a'))
 ///     .load(connection);
 /// assert_eq!(Ok(vec![String::from("Ha%%0r")]), users_with_percent);
-/// assert_eq!(Ok(vec![String::from("Sean"), String::from("Tess")]), users_without_percent);
+/// assert_eq!(
+///     Ok(vec![String::from("Sean"), String::from("Tess")]),
+///     users_without_percent
+/// );
 /// # }
 /// ```
 pub trait EscapeExpressionMethods: Sized {

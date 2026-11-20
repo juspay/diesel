@@ -10,6 +10,10 @@
     clippy::used_underscore_binding,
     missing_copy_implementations
 )]
+#![allow(
+    clippy::print_stdout,
+    reason = "This is a CLI tool that's expected to output something"
+)]
 #![cfg_attr(not(test), warn(clippy::unwrap_used))]
 
 mod config;
@@ -21,23 +25,24 @@ mod errors;
 mod infer_schema_internals;
 mod migrations;
 mod print_schema;
-#[cfg(any(feature = "postgres", feature = "mysql"))]
+#[cfg(any(feature = "postgres", feature = "mysql", feature = "mariadb"))]
 mod query_helper;
 
-use clap::ArgMatches;
-use clap_complete::{generate, Shell};
+use clap::Parser;
+
 use database::InferConnection;
-use diesel::backend::Backend;
 use diesel::Connection;
+use diesel::backend::Backend;
 use diesel_migrations::{FileBasedMigrations, HarnessWithOutput, MigrationHarness};
 use similar_asserts::SimpleDiff;
 use std::error::Error;
-use std::io::stdout;
 use std::path::{Path, PathBuf};
 use std::{env, fs};
+use tracing_subscriber::EnvFilter;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
-use tracing_subscriber::EnvFilter;
+
+use crate::cli::{Cli, DieselCliCommand};
 
 use self::config::Config;
 pub static TIMESTAMP_FORMAT: &str = "%Y-%m-%d-%H%M%S";
@@ -50,7 +55,7 @@ fn main() {
 }
 
 fn inner_main() -> Result<(), crate::errors::Error> {
-    let filter = EnvFilter::from_default_env();
+    let filter = EnvFilter::from_env("DIESEL_LOG");
     let fmt = tracing_subscriber::fmt::layer();
 
     tracing_subscriber::Registry::default()
@@ -66,19 +71,42 @@ fn inner_main() -> Result<(), crate::errors::Error> {
         }
     })?;
 
-    let matches = cli::build_cli().get_matches();
+    let cli = Cli::parse();
 
-    match matches
-        .subcommand()
-        .expect("Clap should prevent reaching this without subcommand")
-    {
-        ("migration", matches) => self::migrations::run_migration_command(matches)?,
-        ("setup", matches) => run_setup_command(matches)?,
-        ("database", matches) => run_database_command(matches)?,
-        ("completions", matches) => generate_completions_command(matches),
-        ("print-schema", matches) => run_infer_schema(matches)?,
-        _ => unreachable!("The cli parser should prevent reaching here"),
+    let database_url = cli.database_url;
+    let config_file = cli.config_file;
+    let locked_schema = cli.locked_schema;
+    let migration_dir = cli.migration_dir;
+
+    match cli.command {
+        DieselCliCommand::Migration(migration_args) => self::migrations::run_migration_command(
+            migration_args,
+            database_url,
+            config_file,
+            locked_schema,
+            migration_dir,
+        )?,
+        DieselCliCommand::Setup {
+            no_default_migration,
+        } => self::database::run_setup_command(
+            database_url,
+            migration_dir,
+            config_file,
+            no_default_migration,
+        )?,
+        DieselCliCommand::Database(args) => self::database::run_database_command(
+            args,
+            config_file,
+            database_url,
+            locked_schema,
+            migration_dir,
+        )?,
+        DieselCliCommand::Completions { shell } => self::cli::generate_completions_command(&shell),
+        DieselCliCommand::PrintSchema(args) => {
+            self::print_schema::run_infer_schema(args, config_file, database_url)?
+        }
     }
+
     Ok(())
 }
 
@@ -95,40 +123,33 @@ where
         .map(|_| ())
 }
 
-#[tracing::instrument]
-fn run_setup_command(matches: &ArgMatches) -> Result<(), crate::errors::Error> {
-    let migrations_dir = create_migrations_dir(matches)?;
-    create_config_file(matches, &migrations_dir)?;
-
-    database::setup_database(matches, &migrations_dir)?;
-    Ok(())
-}
-
 /// Checks if the migration directory exists, else creates it.
 /// For more information see the `migrations_dir` function.
-fn create_migrations_dir(matches: &ArgMatches) -> Result<PathBuf, crate::errors::Error> {
-    let dir = match self::migrations::migrations_dir(matches) {
+fn create_migrations_dir(
+    migration_dir: Option<std::path::PathBuf>,
+    config_file: Option<std::path::PathBuf>,
+) -> Result<PathBuf, crate::errors::Error> {
+    let dir = match self::migrations::migrations_dir(migration_dir, config_file) {
         Ok(dir) => dir,
-        Err(_) => find_project_root()?.join("migrations"),
+        Err(_) => find_project_root().unwrap_or_default().join("migrations"),
     };
 
     if dir.exists() {
         // This is a cleanup code for migrating from an
         // older version of diesel_cli that set a `.gitkeep` instead of a `.keep` file.
         // TODO: remove this after a few releases
-        if let Ok(read_dir) = fs::read_dir(&dir) {
-            if let Some(dir_entry) =
+        if let Ok(read_dir) = fs::read_dir(&dir)
+            && let Some(dir_entry) =
                 read_dir
                     .filter_map(|entry| entry.ok())
                     .find(|entry| match entry.file_type() {
                         Ok(file_type) => file_type.is_file() && entry.file_name() == ".gitkeep",
                         Err(_) => false,
                     })
-            {
-                fs::remove_file(dir_entry.path()).unwrap_or_else(|err| {
-                    eprintln!("WARNING: Unable to delete existing `migrations/.gitkeep`:\n{err}")
-                });
-            }
+        {
+            fs::remove_file(dir_entry.path()).unwrap_or_else(|err| {
+                eprintln!("WARNING: Unable to delete existing `migrations/.gitkeep`:\n{err}")
+            });
         }
     } else {
         create_migrations_directory(&dir)?;
@@ -138,18 +159,24 @@ fn create_migrations_dir(matches: &ArgMatches) -> Result<PathBuf, crate::errors:
 }
 
 fn create_config_file(
-    matches: &ArgMatches,
+    config_file: Option<std::path::PathBuf>,
     migrations_dir: &Path,
+    current_path: &Path,
 ) -> Result<(), crate::errors::Error> {
     use std::io::Write;
-    let path = Config::file_path(matches);
+    let path = Config::file_path(config_file);
     if !path.exists() {
         let source_content = include_str!("default_files/diesel.toml").to_string();
+        let migrations_dir_relative =
+            convert_absolute_path_to_relative(migrations_dir, current_path);
         // convert the path to a valid toml string (escaping backslashes on windows)
-        let migrations_dir_toml_string = migrations_dir.display().to_string().replace('\\', "\\\\");
+        let migrations_dir_toml_string = migrations_dir_relative
+            .display()
+            .to_string()
+            .replace('\\', "\\\\");
         let modified_content = source_content.replace(
             "dir = \"migrations\"",
-            &format!("dir = \"{}\"", migrations_dir_toml_string),
+            &format!("dir = \"{migrations_dir_toml_string}\""),
         );
         let mut file = fs::File::create(&path)
             .map_err(|e| crate::errors::Error::IoError(e, Some(path.to_owned())))?;
@@ -158,36 +185,6 @@ fn create_config_file(
     }
 
     Ok(())
-}
-
-#[tracing::instrument]
-fn run_database_command(matches: &ArgMatches) -> Result<(), crate::errors::Error> {
-    match matches
-        .subcommand()
-        .expect("Clap should prevent reaching this without subcommand")
-    {
-        ("setup", args) => {
-            let migrations_dir = self::migrations::migrations_dir(matches)?;
-            database::setup_database(args, &migrations_dir)?;
-            regenerate_schema_if_file_specified(matches)?;
-        }
-        ("reset", args) => {
-            let migrations_dir = self::migrations::migrations_dir(matches)?;
-            database::reset_database(args, &migrations_dir)?;
-            regenerate_schema_if_file_specified(matches)?;
-        }
-        ("drop", args) => database::drop_database_command(args)?,
-        _ => unreachable!("The cli parser should prevent reaching here"),
-    };
-    Ok(())
-}
-
-#[tracing::instrument]
-fn generate_completions_command(matches: &ArgMatches) {
-    let shell: &Shell = matches.get_one("SHELL").expect("Shell is set here?");
-    let mut app = cli::build_cli();
-    let name = app.get_name().to_string();
-    generate(*shell, &mut app, name, &mut stdout());
 }
 
 /// Looks for a migrations directory in the current path and all parent paths,
@@ -228,57 +225,88 @@ fn search_for_directory_containing_file(
 
 // Converts an absolute path to a relative path, with the restriction that the
 // target path must be in the same directory or above the current path.
-fn convert_absolute_path_to_relative(target_path: &Path, mut current_path: &Path) -> PathBuf {
-    let mut result = PathBuf::new();
+fn convert_absolute_path_to_relative(target_path: &Path, current_path: &Path) -> PathBuf {
+    use std::path::Component;
 
-    while !target_path.starts_with(current_path) {
-        result.push("..");
-        match current_path.parent() {
-            Some(parent) => current_path = parent,
-            None => return target_path.into(),
+    let abs_target = dunce::canonicalize(target_path).unwrap_or_else(|_| target_path.to_owned());
+    let abs_current = dunce::canonicalize(current_path).unwrap_or_else(|_| current_path.to_owned());
+
+    let mut target_components = abs_target.components();
+    let mut current_components = abs_current.components();
+    let mut components = Vec::new();
+    loop {
+        match (target_components.next(), current_components.next()) {
+            (None, None) => {
+                break;
+            }
+            (Some(target_component), None) => {
+                components.push(target_component);
+                components.extend(target_components);
+                break;
+            }
+            (None, _) => {
+                components.push(Component::ParentDir);
+            }
+            (Some(target_component), Some(current_component))
+                if components.is_empty() && target_component == current_component => {}
+            (Some(target_component), Some(Component::CurDir)) => {
+                components.push(target_component);
+            }
+            (Some(target_component), Some(_)) => {
+                components.push(Component::ParentDir);
+                components.extend(current_components.map(|_| Component::ParentDir));
+                components.push(target_component);
+                components.extend(target_components);
+                break;
+            }
         }
     }
-
-    result.join(
-        target_path
-            .strip_prefix(current_path)
-            .expect("Paths have the same base"),
-    )
+    components.iter().map(|c| c.as_os_str()).collect()
 }
 
 #[tracing::instrument]
-fn run_infer_schema(matches: &ArgMatches) -> Result<(), crate::errors::Error> {
-    use crate::print_schema::*;
-
-    tracing::info!("Infer schema");
-    let mut conn = InferConnection::from_matches(matches)?;
-    let root_config = Config::read(matches)?
-        .set_filter(matches)?
-        .update_config(matches)?
-        .print_schema;
-    for config in root_config.all_configs.values() {
-        run_print_schema(&mut conn, config, &mut stdout())?;
-    }
-
-    Ok(())
-}
-
-#[tracing::instrument]
-fn regenerate_schema_if_file_specified(matches: &ArgMatches) -> Result<(), crate::errors::Error> {
+fn regenerate_schema_if_file_specified(
+    config_file: Option<std::path::PathBuf>,
+    database_url: Option<String>,
+    locked_schema: bool,
+) -> Result<(), crate::errors::Error> {
     tracing::debug!("Regenerate schema if required");
 
-    let config = Config::read(matches)?.print_schema;
+    let config = Config::read(config_file)?.print_schema;
+    let multi_schema_safe_tables = if config.has_multiple_schema() {
+        let mut connection = InferConnection::from_maybe_url(database_url.clone())?;
+        Some(print_schema::all_safe_tables_for_multi_schema(
+            &mut connection,
+            &config,
+        )?)
+    } else {
+        None
+    };
+    let multi_schema_table_prefixes = if config.has_multiple_schema() {
+        let mut connection = InferConnection::from_maybe_url(database_url.clone())?;
+        Some(print_schema::multi_schema_table_prefixes(
+            &mut connection,
+            &config,
+            true,
+        )?)
+    } else {
+        None
+    };
     for config in config.all_configs.values() {
         if let Some(ref path) = config.file {
-            let mut connection = InferConnection::from_matches(matches)?;
+            let mut connection = InferConnection::from_maybe_url(database_url.clone())?;
             if let Some(parent) = path.parent() {
                 fs::create_dir_all(parent)
                     .map_err(|e| crate::errors::Error::IoError(e, Some(parent.to_owned())))?;
             }
 
-            if matches.get_flag("LOCKED_SCHEMA") {
-                let schema = print_schema::output_schema(&mut connection, config)?;
-
+            let schema = print_schema::output_schema(
+                &mut connection,
+                config,
+                multi_schema_safe_tables.as_deref(),
+                multi_schema_table_prefixes.as_ref(),
+            )?;
+            if locked_schema {
                 let old_buf = std::fs::read_to_string(path)
                     .map_err(|e| crate::errors::Error::IoError(e, Some(path.to_owned())))?;
 
@@ -294,7 +322,6 @@ fn regenerate_schema_if_file_specified(matches: &ArgMatches) -> Result<(), crate
                     ));
                 }
             } else {
-                let schema = print_schema::output_schema(&mut connection, config)?;
                 std::fs::write(path, schema.as_bytes())
                     .map_err(|e| crate::errors::Error::IoError(e, Some(path.to_owned())))?;
             }
@@ -302,19 +329,6 @@ fn regenerate_schema_if_file_specified(matches: &ArgMatches) -> Result<(), crate
     }
 
     Ok(())
-}
-
-fn supported_backends() -> String {
-    let features = &[
-        #[cfg(feature = "postgres")]
-        "postgres",
-        #[cfg(feature = "mysql")]
-        "mysql",
-        #[cfg(feature = "sqlite")]
-        "sqlite",
-    ];
-
-    features.join(" ")
 }
 
 #[cfg(test)]

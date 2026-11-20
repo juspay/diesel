@@ -1,11 +1,11 @@
+use crate::NullableExpressionMethods;
 use crate::backend::Backend;
 use crate::deserialize::{self, FromSql, Queryable, QueryableByName};
 use crate::expression::bound::Bound;
 use crate::expression::*;
 use crate::query_builder::QueryId;
 use crate::serialize::{self, IsNull, Output, ToSql};
-use crate::sql_types::{is_nullable, HasSqlType, Nullable, SingleValue, SqlType};
-use crate::NullableExpressionMethods;
+use crate::sql_types::{HasSqlType, Nullable, SingleValue, SqlType, is_nullable};
 
 impl<T, DB> HasSqlType<Nullable<T>> for DB
 where
@@ -123,7 +123,8 @@ where
     }
 }
 
-#[test]
+#[cfg(test)]
+#[diesel_test_helper::test]
 #[cfg(feature = "postgres")]
 fn option_to_sql() {
     use crate::pg::Pg;

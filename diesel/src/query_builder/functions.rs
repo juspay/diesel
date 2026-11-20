@@ -6,8 +6,9 @@ use super::{
     AsQuery, IncompleteInsertOrIgnoreStatement, IncompleteInsertStatement,
     IncompleteReplaceStatement, IntoUpdateTarget, SelectStatement, SqlQuery, UpdateStatement,
 };
-use crate::expression::Expression;
 use crate::Table;
+use crate::expression::Expression;
+use alloc::string::String;
 
 /// Creates an `UPDATE` statement.
 ///
@@ -36,6 +37,7 @@ use crate::Table;
 /// // to have `RETURNING *` automatically appended to the query. Alternatively, you
 /// // can explicitly return an expression by using the `returning` method before
 /// // getting the result.
+/// // Note for backend `mariadb`: support for `UPDATE ... RETURNING` was introduced with version 13.0
 /// assert_eq!(Ok((1, "James".to_string())), updated_row);
 /// # }
 /// # #[cfg(not(feature = "postgres"))]
@@ -77,6 +79,138 @@ use crate::Table;
 /// # #[cfg(not(feature = "postgres"))]
 /// # fn main() {}
 /// ```
+///
+/// <br/>
+///
+/// # Batch Update
+///
+/// To update a batch of rows, provide [`set`] a slice or a reference to a vector
+/// as an argument. You cannot call [`filter`], since a special `WHERE` clause
+/// will be auto-generated instead. The `WHERE` clause will use the PRIMARY KEY
+/// as an identifier to apply the changes. The update struct requires both derive
+/// macros [`AsChangeset`] and [`Identifiable`].
+///
+/// [`AsChangeset`]: crate::diesel_derives::AsChangeset
+/// [`Identifiable`]: crate::diesel_derives::Identifiable
+///
+/// Batch update using `id` as the PRIMARY KEY:
+///
+/// ```rust
+/// # include!("../doctest_setup.rs");
+/// table! {
+///     users {
+///         id -> Integer,
+///         name -> VarChar,
+///         surname -> VarChar,
+///     }
+/// }
+/// # #[cfg(feature = "postgres")]
+/// # fn main() {
+/// # let connection = &mut establish_connection();
+/// # diesel::sql_query("DROP TABLE users").execute(connection).unwrap();
+/// # diesel::sql_query("CREATE TABLE users (
+/// #     id SERIAL PRIMARY KEY,
+/// #     name VARCHAR,
+/// #     surname VARCHAR)").execute(connection).unwrap();
+/// # diesel::sql_query(
+/// #     "INSERT INTO users(name, surname) VALUES
+/// #      ('Sage', 'Griffin'), ('Jim', 'Brown'), ('Tom', 'Smith'),
+/// #      ('Lea', 'Kemp'), ('Malik', 'Wu'), ('Xavier', 'Giles')"
+/// # ).execute(connection).unwrap();
+///
+/// #[derive(Debug, Clone, AsChangeset, Identifiable)]
+/// struct User {
+///     id: i32,
+///     name: String,
+///     surname: String,
+/// }
+///
+/// let users_batch = [
+///    User { id: 1, name: "James".to_string(), surname: "Bond".to_string() },
+///    User { id: 6, name: "Mev".to_string(), surname: "Sane".to_string() },
+///    User { id: 3, name: "Kody".to_string(), surname: "Pineda".to_string() },
+///    // Previous update of `id = 6` will be overwritten in the database.
+///    User { id: 6, name: "Mev2".to_string(), surname: "Sane2".to_string() },
+/// ];
+///
+/// diesel::update(users::table).set(&users_batch).execute(connection).unwrap();
+///
+/// let updated_rows = users::table.order(users::id).load(connection);
+///
+/// assert_eq!(
+///     Ok(vec![
+///         (1, "James".to_string(), "Bond".to_string()), // updated
+///         (2, "Jim".to_string(), "Brown".to_string()),
+///         (3, "Kody".to_string(), "Pineda".to_string()), // updated
+///         (4, "Lea".to_string(), "Kemp".to_string()),
+///         (5, "Malik".to_string(), "Wu".to_string()),
+///         (6, "Mev2".to_string(), "Sane2".to_string()) // updated
+///     ]),
+///     updated_rows
+/// );
+/// # }
+/// # #[cfg(not(feature = "postgres"))]
+/// # fn main() {}
+/// ```
+///
+/// Batch update using `(id, name)` as the grouped PRIMARY KEY:
+///
+/// ```rust
+/// # include!("../doctest_setup.rs");
+/// table! {
+///     users (id, name) { // define grouped primary key
+///         id -> Integer,
+///         name -> VarChar,
+///         surname -> VarChar,
+///     }
+/// }
+/// # #[cfg(feature = "postgres")]
+/// # fn main() {
+/// # let connection = &mut establish_connection();
+/// # diesel::sql_query("DROP TABLE users").execute(connection).unwrap();
+/// # diesel::sql_query("CREATE TABLE users (
+/// #     id SERIAL PRIMARY KEY,
+/// #     name VARCHAR,
+/// #     surname VARCHAR)").execute(connection).unwrap();
+/// # diesel::sql_query(
+/// #     "INSERT INTO users(name, surname) VALUES
+/// #      ('Sage', 'Griffin'), ('Jim', 'Brown'), ('Tom', 'Smith'),
+/// #      ('Lea', 'Kemp'), ('Malik', 'Wu'), ('Xavier', 'Giles')"
+/// # ).execute(connection).unwrap();
+///
+/// #[derive(Debug, Clone, AsChangeset, Identifiable)]
+/// #[diesel(primary_key(id, name))] // mandatory: provide grouped primary key
+/// struct User {
+///     id: i32,
+///     name: String,
+///     surname: String,
+/// }
+///
+/// let users_batch = vec![
+///     User { id: 1, name: "J".to_string(), surname: "Bond".to_string() },
+///     User { id: 3, name: "K".to_string(), surname: "Pineda".to_string() },
+///     User { id: 6, name: "Xavier".to_string(), surname: "Mev".to_string() }
+/// ];
+///
+/// diesel::update(users::table).set(&users_batch).execute(connection).unwrap();
+///
+/// let updated_rows = users::table.order(users::id).load(connection);
+///
+/// assert_eq!(
+///     Ok(vec![
+///         (1, "Sage".to_string(), "Griffin".to_string()), // not updated
+///         (2, "Jim".to_string(), "Brown".to_string()),
+///         (3, "Tom".to_string(), "Smith".to_string()), // not updated
+///         (4, "Lea".to_string(), "Kemp".to_string()),
+///         (5, "Malik".to_string(), "Wu".to_string()),
+///         (6, "Xavier".to_string(), "Mev".to_string()) // updated
+///     ]),
+///     updated_rows
+/// );
+/// # }
+/// # #[cfg(not(feature = "postgres"))]
+/// # fn main() {}
+/// ```
 pub fn update<T: IntoUpdateTarget>(source: T) -> UpdateStatement<T::Table, T::WhereClause> {
     UpdateStatement::new(source.into_update_target())
 }
@@ -107,7 +241,10 @@ pub fn update<T: IntoUpdateTarget>(source: T) -> UpdateStatement<T::Table, T::Wh
 /// #     let connection = &mut establish_connection();
 /// let old_count = users.count().first::<i64>(connection);
 /// diesel::delete(users.filter(id.eq(1))).execute(connection)?;
-/// assert_eq!(old_count.map(|count| count - 1), users.count().first(connection));
+/// assert_eq!(
+///     old_count.map(|count| count - 1),
+///     users.count().first(connection)
+/// );
 /// # Ok(())
 /// # }
 /// ```
@@ -162,10 +299,7 @@ pub fn delete<T: IntoUpdateTarget>(source: T) -> DeleteStatement<T::Table, T::Wh
 ///
 /// assert_eq!(Ok(1), rows_inserted);
 ///
-/// let new_users = vec![
-///     name.eq("Tess"),
-///     name.eq("Jim"),
-/// ];
+/// let new_users = vec![name.eq("Tess"), name.eq("Jim")];
 ///
 /// let rows_inserted = diesel::insert_into(users)
 ///     .values(&new_users)
@@ -191,10 +325,7 @@ pub fn delete<T: IntoUpdateTarget>(source: T) -> DeleteStatement<T::Table, T::Wh
 ///
 /// assert_eq!(Ok(1), rows_inserted);
 ///
-/// let new_users = vec![
-///     (id.eq(2), name.eq("Tess")),
-///     (id.eq(3), name.eq("Jim")),
-/// ];
+/// let new_users = vec![(id.eq(2), name.eq("Tess")), (id.eq(3), name.eq("Jim"))];
 ///
 /// let rows_inserted = diesel::insert_into(users)
 ///     .values(&new_users)
@@ -231,8 +362,12 @@ pub fn delete<T: IntoUpdateTarget>(source: T) -> DeleteStatement<T::Table, T::Wh
 /// // Insert many records
 ///
 /// let new_users = vec![
-///     NewUser { name: "Leeloo Multipass" },
-///     NewUser { name: "Korben Dallas" },
+///     NewUser {
+///         name: "Leeloo Multipass",
+///     },
+///     NewUser {
+///         name: "Korben Dallas",
+///     },
 /// ];
 ///
 /// let inserted_names = diesel::insert_into(users)
@@ -253,22 +388,24 @@ pub fn delete<T: IntoUpdateTarget>(source: T) -> DeleteStatement<T::Table, T::Wh
 ///
 /// ```rust
 /// # include!("../doctest_setup.rs");
-/// # #[cfg(not(feature = "sqlite"))]
+/// # #[cfg(not(feature = "__sqlite-shared"))]
 /// # use schema::brands;
 /// #
-/// # #[cfg(not(feature = "sqlite"))]
+/// # #[cfg(not(feature = "__sqlite-shared"))]
 /// #[derive(Insertable)]
 /// #[diesel(table_name = brands)]
 /// struct NewBrand {
 ///     color: Option<String>,
 /// }
 ///
-/// # #[cfg(not(feature = "sqlite"))]
+/// # #[cfg(not(feature = "__sqlite-shared"))]
 /// # fn main() {
 /// #     use schema::brands::dsl::*;
 /// #     let connection = &mut establish_connection();
 /// // Insert `Red`
-/// let new_brand = NewBrand { color: Some("Red".into()) };
+/// let new_brand = NewBrand {
+///     color: Some("Red".into()),
+/// };
 ///
 /// diesel::insert_into(brands)
 ///     .values(&new_brand)
@@ -283,7 +420,7 @@ pub fn delete<T: IntoUpdateTarget>(source: T) -> DeleteStatement<T::Table, T::Wh
 ///     .execute(connection)
 ///     .unwrap();
 /// # }
-/// # #[cfg(feature = "sqlite")]
+/// # #[cfg(feature = "__sqlite-shared")]
 /// # fn main() {}
 /// ```
 ///
@@ -299,22 +436,24 @@ pub fn delete<T: IntoUpdateTarget>(source: T) -> DeleteStatement<T::Table, T::Wh
 ///
 /// ```rust
 /// # include!("../doctest_setup.rs");
-/// # #[cfg(not(feature = "sqlite"))]
+/// # #[cfg(not(feature = "__sqlite-shared"))]
 /// # use schema::brands;
 /// #
-/// # #[cfg(not(feature = "sqlite"))]
+/// # #[cfg(not(feature = "__sqlite-shared"))]
 /// #[derive(Insertable)]
 /// #[diesel(table_name = brands)]
 /// struct NewBrand {
 ///     accent: Option<Option<String>>,
 /// }
 ///
-/// # #[cfg(not(feature = "sqlite"))]
+/// # #[cfg(not(feature = "__sqlite-shared"))]
 /// # fn main() {
 /// #     use schema::brands::dsl::*;
 /// #     let connection = &mut establish_connection();
 /// // Insert `Red`
-/// let new_brand = NewBrand { accent: Some(Some("Red".into())) };
+/// let new_brand = NewBrand {
+///     accent: Some(Some("Red".into())),
+/// };
 ///
 /// diesel::insert_into(brands)
 ///     .values(&new_brand)
@@ -337,7 +476,7 @@ pub fn delete<T: IntoUpdateTarget>(source: T) -> DeleteStatement<T::Table, T::Wh
 ///     .execute(connection)
 ///     .unwrap();
 /// # }
-/// # #[cfg(feature = "sqlite")]
+/// # #[cfg(feature = "__sqlite-shared")]
 /// # fn main() {}
 /// ```
 ///
@@ -354,6 +493,11 @@ pub fn delete<T: IntoUpdateTarget>(source: T) -> DeleteStatement<T::Table, T::Wh
 /// ```rust
 /// # include!("../doctest_setup.rs");
 /// #
+/// # // Reading the query result requires reading memory allocated by the
+/// # // native sqlite library, which miri cannot track provenance for.
+/// # #[cfg(miri)]
+/// # fn main() {}
+/// # #[cfg(not(miri))]
 /// # fn main() {
 /// #     run_test().unwrap();
 /// # }
@@ -362,19 +506,13 @@ pub fn delete<T: IntoUpdateTarget>(source: T) -> DeleteStatement<T::Table, T::Wh
 /// #     use schema::{posts, users};
 /// #     let conn = &mut establish_connection();
 /// #     diesel::delete(posts::table).execute(conn)?;
-/// let new_posts = users::table
-///     .select((
-///         users::name.concat("'s First Post"),
-///         users::id,
-///     ));
+/// let new_posts = users::table.select((users::name.concat("'s First Post"), users::id));
 /// diesel::insert_into(posts::table)
 ///     .values(new_posts)
 ///     .into_columns((posts::title, posts::user_id))
 ///     .execute(conn)?;
 ///
-/// let inserted_posts = posts::table
-///     .select(posts::title)
-///     .load::<String>(conn)?;
+/// let inserted_posts = posts::table.select(posts::title).load::<String>(conn)?;
 /// let expected = vec!["Sean's First Post", "Tess's First Post"];
 /// assert_eq!(expected, inserted_posts);
 /// #     Ok(())
@@ -397,7 +535,13 @@ pub fn delete<T: IntoUpdateTarget>(source: T) -> DeleteStatement<T::Table, T::Wh
 ///     ])
 ///     .returning(name)
 ///     .get_results(connection);
-/// assert_eq!(Ok(vec!["Diva Plavalaguna".to_string(), "Father Vito Cornelius".to_string()]), inserted_names);
+/// assert_eq!(
+///     Ok(vec![
+///         "Diva Plavalaguna".to_string(),
+///         "Father Vito Cornelius".to_string()
+///     ]),
+///     inserted_names
+/// );
 /// # }
 /// # #[cfg(not(feature = "postgres"))]
 /// # fn main() {}
@@ -421,6 +565,11 @@ pub fn insert_into<T: Table>(target: T) -> IncompleteInsertStatement<T> {
 /// ```rust
 /// # include!("../doctest_setup.rs");
 /// #
+/// # // Reading the query result requires reading memory allocated by the
+/// # // native sqlite library, which miri cannot track provenance for.
+/// # #[cfg(miri)]
+/// # fn main() {}
+/// # #[cfg(not(miri))]
 /// # fn main() {
 /// #     run_test().unwrap();
 /// # }
@@ -492,30 +641,43 @@ where
 /// ```rust
 /// # include!("../doctest_setup.rs");
 /// #
-/// # #[cfg(not(feature = "postgres"))]
+/// # // Reading the query result requires reading memory allocated by the
+/// # // native sqlite library, which miri cannot track provenance for.
+/// # #[cfg(miri)]
+/// # fn main() {}
+/// # #[cfg(not(miri))]
 /// # fn main() {
+/// #     run_test().unwrap();
+/// # }
+/// #
+/// # #[cfg(not(feature = "postgres"))]
+/// # fn run_test() -> QueryResult<()> {
 /// #     use schema::users::dsl::*;
-/// #     use diesel::{insert_into, replace_into};
+/// #     use diesel::replace_into;
 /// #
 /// #     let conn = &mut establish_connection();
-/// #     diesel::sql_query("DELETE FROM users").execute(conn).unwrap();
+/// #     diesel::sql_query("DELETE FROM users").execute(conn)?;
 /// replace_into(users)
 ///     .values(&vec![
 ///         (id.eq(1), name.eq("Sean")),
 ///         (id.eq(2), name.eq("Tess")),
 ///     ])
-///     .execute(conn)
-///     .unwrap();
+///     .execute(conn)?;
 ///
 /// replace_into(users)
 ///     .values((id.eq(1), name.eq("Jim")))
-///     .execute(conn)
-///     .unwrap();
+///     .execute(conn)?;
 ///
 /// let names = users.select(name).order(id).load::<String>(conn);
 /// assert_eq!(Ok(vec!["Jim".into(), "Tess".into()]), names);
+/// #     Ok(())
 /// # }
-/// # #[cfg(feature = "postgres")] fn main() {}
+/// #
+/// # #[cfg(feature = "postgres")]
+/// # fn run_test() -> QueryResult<()> {
+/// #     Ok(())
+/// # }
+/// ```
 pub fn replace_into<T: Table>(target: T) -> IncompleteReplaceStatement<T> {
     IncompleteInsertStatement::new(target, Replace)
 }
@@ -541,6 +703,11 @@ pub fn replace_into<T: Table>(target: T) -> IncompleteReplaceStatement<T> {
 /// that the given type is correct. If your query returns a column of an
 /// unexpected type, the result may have the wrong value, or return an error.
 ///
+/// Diesel also passes the given query string to the database as written. It
+/// must therefore never contain values that come from outside your own code,
+/// because anything interpolated into the SQL text can carry an SQL
+/// injection. Pass such values with [`SqlQuery::bind()`] instead.
+///
 /// # Examples
 ///
 /// ```rust
@@ -554,6 +721,11 @@ pub fn replace_into<T: Table>(target: T) -> IncompleteReplaceStatement<T> {
 /// #     name: String,
 /// # }
 /// #
+/// # // Reading the query result requires reading memory allocated by the
+/// # // native sqlite library, which miri cannot track provenance for.
+/// # #[cfg(miri)]
+/// # fn main() {}
+/// # #[cfg(not(miri))]
 /// # fn main() {
 /// #     run_test_1().unwrap();
 /// #     run_test_2().unwrap();
@@ -564,11 +736,16 @@ pub fn replace_into<T: Table>(target: T) -> IncompleteReplaceStatement<T> {
 /// #     use diesel::sql_types::{Integer, Text};
 /// #
 /// #     let connection = &mut establish_connection();
-/// let users = sql_query("SELECT * FROM users ORDER BY id")
-///     .load(connection);
+/// let users = sql_query("SELECT * FROM users ORDER BY id").load(connection);
 /// let expected_users = vec![
-///     User { id: 1, name: "Sean".into() },
-///     User { id: 2, name: "Tess".into() },
+///     User {
+///         id: 1,
+///         name: "Sean".into(),
+///     },
+///     User {
+///         id: 2,
+///         name: "Tess".into(),
+///     },
 /// ];
 /// assert_eq!(Ok(expected_users), users);
 /// #     Ok(())
@@ -592,9 +769,10 @@ pub fn replace_into<T: Table>(target: T) -> IncompleteReplaceStatement<T> {
 ///     .bind::<Integer, _>(1)
 ///     .bind::<Text, _>("Tess")
 ///     .get_results(connection);
-/// let expected_users = vec![
-///     User { id: 3, name: "Jim".into() },
-/// ];
+/// let expected_users = vec![User {
+///     id: 3,
+///     name: "Jim".into(),
+/// }];
 /// assert_eq!(Ok(expected_users), users);
 /// #     Ok(())
 /// # }

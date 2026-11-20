@@ -1,0 +1,36 @@
+name: ClusterFuzzLite batch fuzzing
+on:
+  schedule:
+    - cron: "0 06 * * *" # 06:00 UTC daily
+permissions:
+  actions: read # required by clusterfuzzlite
+concurrency:
+  group: ${{ github.workflow }}
+jobs:
+  BatchFuzzing:
+    name: Batched fuzzing
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # store extended corpus
+    strategy:
+      fail-fast: false
+      matrix:
+        sanitizer:
+          - address
+    steps:
+      - name: Build Fuzzers (${{ matrix.sanitizer }})
+        id: build
+        uses: google/clusterfuzzlite/actions/build_fuzzers@v1
+        with:
+          language: rust
+          sanitizer: ${{ matrix.sanitizer }}
+      - name: Run Fuzzers (${{ matrix.sanitizer }})
+        id: run
+        uses: google/clusterfuzzlite/actions/run_fuzzers@v1
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          fuzz-seconds: 3600
+          mode: "batch"
+          sanitizer: ${{ matrix.sanitizer }}
+          storage-repo: ${{ github.server_url }}/${{ github.repository }}.git
+          storage-repo-branch: clusterfuzzlite

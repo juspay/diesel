@@ -25,8 +25,11 @@ struct User {
     name: String,
 }
 
-define_sql_function!(fn foo(x: Integer) -> Integer);
-define_sql_function!(fn bar(x: VarChar) -> VarChar);
+#[declare_sql_function]
+extern "SQL" {
+    fn foo(x: Integer) -> Integer;
+    fn bar(x: VarChar) -> VarChar;
+}
 
 fn main() {
     use self::posts::title;
@@ -35,8 +38,10 @@ fn main() {
     let mut conn = PgConnection::establish("").unwrap();
 
     let _ = users::table.filter(name.eq(foo(1)));
+    //~^ ERROR: the trait bound `foo<Bound<Integer, i32>>: AsExpression<Text>` is not satisfied
 
     let _ = users::table
         .filter(name.eq(bar(title)))
         .load::<User>(&mut conn);
+    //~^ ERROR: type mismatch resolving `<table as AppearsInFromClause<table>>::Count == Once`
 }

@@ -2,7 +2,11 @@ use crate::schema::*;
 use diesel::query_dsl::positional_order_dsl::{OrderColumn, PositionalOrderDsl};
 use diesel::*;
 
-#[test]
+// This test reads query results, which requires reading memory
+// allocated by the native sqlite library. Miri cannot track the
+// provenance of that memory when using `-Zmiri-native-lib`.
+#[cfg(not(miri))]
+#[diesel_test_helper::test]
 fn union() {
     use crate::schema::users::dsl::*;
 
@@ -32,7 +36,11 @@ fn union() {
     assert_eq!(expected_data, data);
 }
 
-#[test]
+// This test reads query results, which requires reading memory
+// allocated by the native sqlite library. Miri cannot track the
+// provenance of that memory when using `-Zmiri-native-lib`.
+#[cfg(not(miri))]
+#[diesel_test_helper::test]
 fn union_all() {
     use crate::schema::users::dsl::*;
 
@@ -63,7 +71,11 @@ fn union_all() {
     assert_eq!(expected_data, data);
 }
 
-#[test]
+// This test reads query results, which requires reading memory
+// allocated by the native sqlite library. Miri cannot track the
+// provenance of that memory when using `-Zmiri-native-lib`.
+#[cfg(not(miri))]
+#[diesel_test_helper::test]
 #[cfg(any(feature = "postgres", feature = "sqlite"))]
 fn intersect() {
     use crate::schema::users::dsl::*;
@@ -90,7 +102,11 @@ fn intersect() {
     assert_eq!(expected_data, data);
 }
 
-#[test]
+// This test reads query results, which requires reading memory
+// allocated by the native sqlite library. Miri cannot track the
+// provenance of that memory when using `-Zmiri-native-lib`.
+#[cfg(not(miri))]
+#[diesel_test_helper::test]
 #[cfg(any(feature = "postgres", feature = "sqlite"))]
 fn except() {
     use crate::schema::users::dsl::*;
@@ -102,7 +118,7 @@ fn except() {
         NewUser::new("Jim", None),
     ];
     insert_into(users).values(&data).execute(conn).unwrap();
-    let data = users.load::<User>(conn).unwrap();
+    let data = users.order(id).load::<User>(conn).unwrap();
     let sean = &data[0];
     let tess = &data[1];
     let _jim = &data[2];
@@ -117,7 +133,11 @@ fn except() {
     assert_eq!(expected_data, data);
 }
 
-#[test]
+// This test reads query results, which requires reading memory
+// allocated by the native sqlite library. Miri cannot track the
+// provenance of that memory when using `-Zmiri-native-lib`.
+#[cfg(not(miri))]
+#[diesel_test_helper::test]
 fn union_with_limit() {
     use crate::schema::users::dsl::*;
 
@@ -145,7 +165,11 @@ fn union_with_limit() {
     assert_eq!(expected_data, data);
 }
 
-#[test]
+// This test reads query results, which requires reading memory
+// allocated by the native sqlite library. Miri cannot track the
+// provenance of that memory when using `-Zmiri-native-lib`.
+#[cfg(not(miri))]
+#[diesel_test_helper::test]
 fn union_with_offset() {
     use crate::schema::users::dsl::*;
 
@@ -174,7 +198,11 @@ fn union_with_offset() {
     assert_eq!(expected_data, data);
 }
 
-#[test]
+// This test reads query results, which requires reading memory
+// allocated by the native sqlite library. Miri cannot track the
+// provenance of that memory when using `-Zmiri-native-lib`.
+#[cfg(not(miri))]
+#[diesel_test_helper::test]
 fn union_with_order() {
     let conn = &mut connection();
     let data = vec![
@@ -204,7 +232,11 @@ fn union_with_order() {
     assert_eq!(vec![String::from("Jim"), "Sean".into()], users);
 }
 
-#[test]
+// This test reads query results, which requires reading memory
+// allocated by the native sqlite library. Miri cannot track the
+// provenance of that memory when using `-Zmiri-native-lib`.
+#[cfg(not(miri))]
+#[diesel_test_helper::test]
 fn as_subquery_for_eq_in() {
     let conn = &mut connection_with_sean_and_tess_in_users_table();
 
@@ -235,7 +267,11 @@ fn as_subquery_for_eq_in() {
     assert_eq!(out, vec!["First post", "Second post"]);
 }
 
-#[test]
+// This test reads query results, which requires reading memory
+// allocated by the native sqlite library. Miri cannot track the
+// provenance of that memory when using `-Zmiri-native-lib`.
+#[cfg(not(miri))]
+#[diesel_test_helper::test]
 fn positional_order_by() {
     use crate::schema::users::dsl::*;
 

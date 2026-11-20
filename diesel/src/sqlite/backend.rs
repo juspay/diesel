@@ -61,12 +61,26 @@ impl SqlDialect for Sqlite {
     type ConcatClause = sql_dialect::concat_clause::ConcatWithPipesClause;
     type DefaultValueClauseForInsert = sql_dialect::default_value_clause::AnsiDefaultValueClause;
 
+    type BatchUpdateSupport = SqliteBatchUpdate;
+
     type EmptyFromClauseSyntax = sql_dialect::from_clause_syntax::AnsiSqlFromClauseSyntax;
     type SelectStatementSyntax = sql_dialect::select_statement_syntax::AnsiSqlSelectStatement;
 
     type ExistsSyntax = sql_dialect::exists_syntax::AnsiSqlExistsSyntax;
     type ArrayComparison = sql_dialect::array_comparison::AnsiSqlArrayComparison;
     type AliasSyntax = sql_dialect::alias_syntax::AsAliasSyntax;
+
+    type WindowFrameClauseGroupSupport =
+        sql_dialect::window_frame_clause_group_support::IsoGroupWindowFrameUnit;
+    type WindowFrameExclusionSupport =
+        sql_dialect::window_frame_exclusion_support::FrameExclusionSupport;
+    type AggregateFunctionExpressions =
+        sql_dialect::aggregate_function_expressions::PostgresLikeAggregateFunctionExpressions;
+    type BuiltInWindowFunctionRequireOrder =
+        sql_dialect::built_in_window_function_require_order::NoOrderRequired;
+
+    type SqlFunctionParameterNotation =
+        sql_dialect::sql_function_parameter_notation::PositionalNotationOnly;
 }
 
 impl DieselReserveSpecialization for Sqlite {}
@@ -76,6 +90,7 @@ impl TrustedBackend for Sqlite {}
 pub struct SqliteOnConflictClause;
 
 impl sql_dialect::on_conflict_clause::SupportsOnConflictClause for SqliteOnConflictClause {}
+impl sql_dialect::on_conflict_clause::SupportsOnConflictClauseWhere for SqliteOnConflictClause {}
 impl sql_dialect::on_conflict_clause::PgLikeOnConflictClause for SqliteOnConflictClause {}
 
 #[derive(Debug, Copy, Clone)]
@@ -85,3 +100,8 @@ pub struct SqliteBatchInsert;
 pub struct SqliteReturningClause;
 
 impl sql_dialect::returning_clause::SupportsReturningClause for SqliteReturningClause {}
+
+#[derive(Debug, Clone, Copy)]
+pub struct SqliteBatchUpdate;
+
+impl sql_dialect::batch_update_support::SupportsBatchUpdate for SqliteBatchUpdate {}

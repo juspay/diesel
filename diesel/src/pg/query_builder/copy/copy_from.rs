@@ -1,5 +1,5 @@
-use std::borrow::Cow;
-use std::marker::PhantomData;
+use alloc::borrow::Cow;
+use core::marker::PhantomData;
 
 use byteorder::NetworkEndian;
 use byteorder::WriteBytesExt;
@@ -7,21 +7,22 @@ use byteorder::WriteBytesExt;
 use super::CommonOptions;
 use super::CopyFormat;
 use super::CopyTarget;
+use crate::Connection;
+use crate::Insertable;
+use crate::QueryResult;
 use crate::expression::bound::Bound;
 use crate::insertable::ColumnInsertValue;
-use crate::pg::backend::FailedToLookupTypeError;
-use crate::pg::metadata_lookup::PgMetadataCacheKey;
 use crate::pg::Pg;
 use crate::pg::PgMetadataLookup;
+use crate::pg::backend::FailedToLookupTypeError;
+use crate::pg::metadata_lookup::PgMetadataCacheKey;
 use crate::query_builder::BatchInsert;
 use crate::query_builder::QueryFragment;
+#[cfg(feature = "postgres")]
 use crate::query_builder::QueryId;
 use crate::query_builder::ValuesClause;
 use crate::serialize::IsNull;
 use crate::serialize::ToSql;
-use crate::Connection;
-use crate::Insertable;
-use crate::QueryResult;
 use crate::{Column, Table};
 
 /// Describes the different possible settings for the `HEADER` option
@@ -55,8 +56,11 @@ impl QueryFragment<Pg> for CopyFromOptions {
                 pass.push_sql(comma);
                 comma = ", ";
                 pass.push_sql("DEFAULT '");
-                // cannot use binds here :(
-                pass.push_sql(default);
+                // we cannot use binds here
+                // so we need to make sure quotes in
+                // the input are handled correctly
+                let default = default.replace('\'', "''");
+                pass.push_sql(&default);
                 pass.push_sql("'");
             }
             if let Some(ref header) = self.header {
@@ -90,6 +94,8 @@ pub struct CopyFrom<S, F> {
     p: PhantomData<S>,
 }
 
+// Same gate as the re-export, only the `postgres` connection builds this.
+#[cfg(feature = "postgres")]
 pub(crate) struct InternalCopyFromQuery<S, T> {
     pub(crate) target: S,
     p: PhantomData<T>,
@@ -105,6 +111,7 @@ impl<S, T> InternalCopyFromQuery<S, T> {
     }
 }
 
+#[cfg(feature = "postgres")]
 impl<S, T> QueryId for InternalCopyFromQuery<S, T>
 where
     S: CopyFromExpression<T>,
@@ -113,6 +120,7 @@ where
     type QueryId = ();
 }
 
+#[cfg(feature = "postgres")]
 impl<S, T> QueryFragment<Pg> for InternalCopyFromQuery<S, T>
 where
     S: CopyFromExpression<T>,
@@ -131,7 +139,7 @@ where
 }
 
 pub trait CopyFromExpression<T> {
-    type Error: From<crate::result::Error> + std::error::Error;
+    type Error: From<crate::result::Error> + core::error::Error;
 
     fn callback(&mut self, copy: &mut impl std::io::Write) -> Result<(), Self::Error>;
 
@@ -145,7 +153,7 @@ pub trait CopyFromExpression<T> {
 
 impl<S, F, E> CopyFromExpression<S::Table> for CopyFrom<S, F>
 where
-    E: From<crate::result::Error> + std::error::Error,
+    E: From<crate::result::Error> + core::error::Error,
     S: CopyTarget,
     F: Fn(&mut dyn std::io::Write) -> Result<(), E>,
 {
@@ -181,9 +189,9 @@ impl PgMetadataLookup for Dummy {
 
 trait CopyFromInsertableHelper {
     type Target: CopyTarget;
-    const COLUMN_COUNT: i16;
+    const COLUMN_COUNT: u16;
 
-    fn write_to_buffer(&self, idx: i16, out: &mut Vec<u8>) -> QueryResult<IsNull>;
+    fn write_to_buffer(&self, idx: u16, out: &mut Vec<u8>) -> QueryResult<IsNull>;
 }
 
 macro_rules! impl_copy_from_insertable_helper_for_values_clause {
@@ -193,23 +201,20 @@ macro_rules! impl_copy_from_insertable_helper_for_values_clause {
         }
     )+) => {
         $(
-            impl<T, $($ST,)* $($T,)* $($TT,)*> CopyFromInsertableHelper for ValuesClause<
+            impl<__T, $($ST,)* $($T,)* $($TT,)*> CopyFromInsertableHelper for ValuesClause<
                 ($(ColumnInsertValue<$ST, Bound<$T, $TT>>,)*),
-            T>
+            __T>
                 where
-                T: Table,
-                $($ST: Column<Table = T>,)*
+                __T: Table,
+                $($ST: Column<Table = __T>,)*
                 ($($ST,)*): CopyTarget,
                 $($TT: ToSql<$T, Pg>,)*
             {
                 type Target = ($($ST,)*);
 
-                // statically known to always fit
-                // as we don't support more than 128 columns
-                #[allow(clippy::cast_possible_truncation)]
-                const COLUMN_COUNT: i16 = $Tuple as i16;
+                const COLUMN_COUNT: u16 = $Tuple;
 
-                fn write_to_buffer(&self, idx: i16, out: &mut Vec<u8>) -> QueryResult<IsNull> {
+                fn write_to_buffer(&self, idx: u16, out: &mut Vec<u8>) -> QueryResult<IsNull> {
                     use crate::query_builder::ByteWrapper;
                     use crate::serialize::Output;
 
@@ -228,12 +233,12 @@ macro_rules! impl_copy_from_insertable_helper_for_values_clause {
                 }
             }
 
-            impl<'a, T, $($ST,)* $($T,)* $($TT,)*> CopyFromInsertableHelper for ValuesClause<
+            impl<'a, __T, $($ST,)* $($T,)* $($TT,)*> CopyFromInsertableHelper for ValuesClause<
                 ($(ColumnInsertValue<$ST, &'a Bound<$T, $TT>>,)*),
-            T>
+            __T>
                 where
-                T: Table,
-                $($ST: Column<Table = T>,)*
+                __T: Table,
+                $($ST: Column<Table = __T>,)*
                 ($($ST,)*): CopyTarget,
                 $($TT: ToSql<$T, Pg>,)*
             {
@@ -241,10 +246,9 @@ macro_rules! impl_copy_from_insertable_helper_for_values_clause {
 
                 // statically known to always fit
                 // as we don't support more than 128 columns
-                #[allow(clippy::cast_possible_truncation)]
-                const COLUMN_COUNT: i16 = $Tuple as i16;
+                const COLUMN_COUNT: u16 = $Tuple;
 
-                fn write_to_buffer(&self, idx: i16, out: &mut Vec<u8>) -> QueryResult<IsNull> {
+                fn write_to_buffer(&self, idx: u16, out: &mut Vec<u8>) -> QueryResult<IsNull> {
                     use crate::query_builder::ByteWrapper;
                     use crate::serialize::Output;
 
@@ -266,7 +270,7 @@ macro_rules! impl_copy_from_insertable_helper_for_values_clause {
     }
 }
 
-diesel_derives::__diesel_for_each_tuple!(impl_copy_from_insertable_helper_for_values_clause);
+crate::for_each_tuple!(impl_copy_from_insertable_helper_for_values_clause);
 
 #[derive(Debug)]
 pub struct InsertableWrapper<I>(Option<I>);
@@ -305,7 +309,7 @@ where
         for i in values.values {
             // column count
             buffer
-                .write_i16::<NetworkEndian>(V::COLUMN_COUNT)
+                .write_u16::<NetworkEndian>(V::COLUMN_COUNT)
                 .map_err(io_result_mapper)?;
             for idx in 0..V::COLUMN_COUNT {
                 // first write the null indicator as dummy value
@@ -445,6 +449,10 @@ impl<T, C, F> CopyFromQuery<T, CopyFrom<C, F>> {
     ///
     /// See the [PostgreSQL documentation](https://www.postgresql.org/docs/current/sql-copy.html)
     /// for more details.
+    ///
+    /// Diesel will automatically escape the provided delimiter for the default
+    /// PostgreSQL setting `standard_conforming_strings=on`. If you use a non-standard
+    /// conforming setting you need to take care of escaping the value on your own
     pub fn with_delimiter(mut self, delimiter: char) -> Self {
         self.action.options.common.delimiter = Some(delimiter);
         self
@@ -455,6 +463,10 @@ impl<T, C, F> CopyFromQuery<T, CopyFrom<C, F>> {
     ///
     /// See the [PostgreSQL documentation](https://www.postgresql.org/docs/current/sql-copy.html)
     /// for more details.
+    ///
+    /// Diesel will automatically escape the provided delimiter for the default
+    /// PostgreSQL setting `standard_conforming_strings=on`. If you use a non-standard
+    /// conforming setting you need to take care of escaping the value on your own
     pub fn with_null(mut self, null: impl Into<String>) -> Self {
         self.action.options.common.null = Some(null.into());
         self
@@ -464,6 +476,10 @@ impl<T, C, F> CopyFromQuery<T, CopyFrom<C, F>> {
     ///
     /// See the [PostgreSQL documentation](https://www.postgresql.org/docs/current/sql-copy.html)
     /// for more details.
+    ///
+    /// Diesel will automatically escape the provided delimiter for the default
+    /// PostgreSQL setting `standard_conforming_strings=on`. If you use a non-standard
+    /// conforming setting you need to take care of escaping the value on your own
     pub fn with_quote(mut self, quote: char) -> Self {
         self.action.options.common.quote = Some(quote);
         self
@@ -473,6 +489,10 @@ impl<T, C, F> CopyFromQuery<T, CopyFrom<C, F>> {
     ///
     /// See the [PostgreSQL documentation](https://www.postgresql.org/docs/current/sql-copy.html)
     /// for more details.
+    ///
+    /// Diesel will automatically escape the provided delimiter for the default
+    /// PostgreSQL setting `standard_conforming_strings=on`. If you use a non-standard
+    /// conforming setting you need to take care of escaping the value on your own
     pub fn with_escape(mut self, escape: char) -> Self {
         self.action.options.common.escape = Some(escape);
         self
@@ -486,6 +506,10 @@ impl<T, C, F> CopyFromQuery<T, CopyFrom<C, F>> {
     /// for more details.
     ///
     /// (This parameter was added with PostgreSQL 16)
+    ///
+    /// Diesel will automatically escape the provided delimiter for the default
+    /// PostgreSQL setting `standard_conforming_strings=on`. If you use a non-standard
+    /// conforming setting you need to take care of escaping the value on your own
     pub fn with_default(mut self, default: impl Into<String>) -> Self {
         self.action.options.default = Some(default.into());
         self
@@ -510,7 +534,7 @@ where
     C: Connection<Backend = Pg>,
 {
     /// The error type returned by the execute function
-    type Error: std::error::Error;
+    type Error: core::error::Error;
 
     /// See the trait documentation for details
     fn execute(self, conn: &mut C) -> Result<usize, Self::Error>;
@@ -604,8 +628,12 @@ pub struct NotSet;
 /// # let connection = &mut establish_connection();
 ///
 /// let data = vec![
-///     NewUser { name: "Diva Plavalaguna" },
-///     NewUser { name: "Father Vito Cornelius" },
+///     NewUser {
+///         name: "Diva Plavalaguna",
+///     },
+///     NewUser {
+///         name: "Father Vito Cornelius",
+///     },
 /// ];
 ///
 /// let count = diesel::copy_from(users::table)

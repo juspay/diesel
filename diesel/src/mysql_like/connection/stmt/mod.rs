@@ -1,0 +1,286 @@
+#![allow(unsafe_code)] // module uses ffi
+use alloc::ffi::CString;
+use core::ffi as libc;
+use core::ffi::CStr;
+use core::marker::PhantomData;
+use core::ptr::NonNull;
+use mysqlclient_sys as ffi;
+
+use super::bind::{OutputBinds, PreparedStatementBinds};
+use super::error_information::{MysqlLikeErrorInformation, sqlstate_from_ptr};
+use crate::connection::statement_cache::{MaybeCached, PreparedStatement};
+use crate::mysql_like::{MysqlLikeBackend, MysqlType};
+use crate::result::{Error, QueryResult, SqlState};
+
+pub(super) mod iterator;
+mod metadata;
+
+pub(super) use self::metadata::{MysqlFieldMetadata, StatementMetadata};
+
+#[allow(dead_code, missing_debug_implementations)]
+// https://github.com/rust-lang/rust/issues/81658
+pub struct Statement<DB: MysqlLikeBackend> {
+    stmt: NonNull<ffi::MYSQL_STMT>,
+    input_binds: Option<PreparedStatementBinds>,
+    _phantom: PhantomData<DB>,
+}
+
+impl<DB> PreparedStatement for Statement<DB>
+where
+    DB: MysqlLikeBackend,
+{
+    fn parameter_count(&self) -> u64 {
+        // SAFETY:
+        // stmt is a valid pointer to MYSQL_STMT that's not deallocated yet
+        //
+        // On windows that returns a u32
+        unsafe { ffi::mysql_stmt_param_count(self.stmt.as_ptr()) as u64 }
+    }
+}
+
+// mysql connection can be shared between threads according to libmysqlclients documentation
+#[allow(unsafe_code)]
+unsafe impl<DB: MysqlLikeBackend> Send for Statement<DB> {}
+
+impl<DB: MysqlLikeBackend> Statement<DB> {
+    pub(crate) fn new(stmt: NonNull<ffi::MYSQL_STMT>) -> Self {
+        Statement {
+            stmt,
+            input_binds: None,
+            _phantom: PhantomData,
+        }
+    }
+
+    pub fn prepare(&self, query: &str) -> QueryResult<()> {
+        use crate::result::Error::InvalidCString;
+
+        let query = CString::new(query).map_err(InvalidCString)?;
+        unsafe {
+            ffi::mysql_stmt_prepare(
+                self.stmt.as_ptr(),
+                query.as_ptr() as *const libc::c_char,
+                query.count_bytes() as libc::c_ulong,
+            );
+        }
+        self.did_an_error_occur()
+    }
+
+    pub fn bind<Iter>(&mut self, binds: Iter) -> QueryResult<()>
+    where
+        Iter: IntoIterator<Item = (MysqlType, Option<Vec<u8>>)>,
+    {
+        let input_binds = PreparedStatementBinds::from_input_data(binds);
+        self.input_bind(input_binds)
+    }
+
+    pub(super) fn input_bind(
+        &mut self,
+        mut input_binds: PreparedStatementBinds,
+    ) -> QueryResult<()> {
+        if input_binds.len() != self.parameter_count() {
+            return Err(
+                crate::connection::statement_cache::invalid_prepared_statement_parameter_count(
+                    self.parameter_count().try_into().unwrap_or(usize::MAX),
+                    input_binds.len().try_into().unwrap_or(usize::MAX),
+                ),
+            );
+        }
+
+        input_binds.with_mysql_binds(|bind_ptr| {
+            // This relies on the invariant that the current value of `self.input_binds`
+            // will not change without this function being called
+            unsafe {
+                ffi::mysql_stmt_bind_param(self.stmt.as_ptr(), bind_ptr);
+            }
+        });
+        self.input_binds = Some(input_binds);
+        self.did_an_error_occur()
+    }
+
+    fn last_error_message(&self) -> String {
+        unsafe { CStr::from_ptr(ffi::mysql_stmt_error(self.stmt.as_ptr())) }
+            .to_string_lossy()
+            .into_owned()
+    }
+
+    fn last_error_sqlstate(&self) -> Option<SqlState> {
+        // SAFETY: `self.stmt` is the live statement handle owned by `self`.
+        let sqlstate = unsafe { ffi::mysql_stmt_sqlstate(self.stmt.as_ptr()) };
+        // SAFETY: the result is null or the NUL terminated SQLSTATE stored on the
+        // statement handle, which no call changes while `self` is borrowed here.
+        unsafe { sqlstate_from_ptr(sqlstate) }
+    }
+
+    ///we return a Option here because mariadb sometimes doesn't provide the statement metadata before the execute
+    pub(super) fn metadata(&self) -> QueryResult<Option<StatementMetadata>> {
+        let result_ptr = unsafe { ffi::mysql_stmt_result_metadata(self.stmt.as_ptr()) };
+        self.did_an_error_occur()?;
+        Ok(NonNull::new(result_ptr).map(StatementMetadata::new))
+    }
+
+    pub(super) fn did_an_error_occur(&self) -> QueryResult<()> {
+        use crate::result::Error::DatabaseError;
+
+        let error_message = self.last_error_message();
+        if error_message.is_empty() {
+            Ok(())
+        } else {
+            let error_number = self.last_error_number();
+            Err(DatabaseError(
+                DB::map_error_number(error_number),
+                Box::new(MysqlLikeErrorInformation {
+                    message: error_message,
+                    sqlstate: self.last_error_sqlstate(),
+                    native_code: i32::try_from(error_number).ok().filter(|&code| code != 0),
+                }),
+            ))
+        }
+    }
+
+    fn last_error_number(&self) -> u32 {
+        // SAFETY: `self.stmt` is the live statement handle owned by `self`.
+        unsafe { ffi::mysql_stmt_errno(self.stmt.as_ptr()) }
+    }
+
+    /// If the pointers referenced by the `MYSQL_BIND` structures are invalidated,
+    /// you must call this function again before calling `mysql_stmt_fetch`.
+    pub unsafe fn bind_result(&self, binds: *mut ffi::MYSQL_BIND) -> QueryResult<()> {
+        unsafe {
+            ffi::mysql_stmt_bind_result(self.stmt.as_ptr(), binds);
+        }
+        self.did_an_error_occur()
+    }
+}
+
+impl<'a, DB: MysqlLikeBackend> MaybeCached<'a, Statement<DB>> {
+    pub(super) fn execute_statement(
+        self,
+        binds: &mut OutputBinds,
+    ) -> QueryResult<StatementUse<'a, DB>> {
+        unsafe {
+            binds.with_mysql_binds(|bind_ptr| self.bind_result(bind_ptr))?;
+            self.execute()
+        }
+    }
+
+    /// This function should be called instead of `results` on queries which
+    /// have no return value. It should never be called on a statement on
+    /// which `results` has previously been called?
+    pub(super) unsafe fn execute(self) -> QueryResult<StatementUse<'a, DB>> {
+        unsafe {
+            ffi::mysql_stmt_execute(self.stmt.as_ptr());
+        }
+        self.did_an_error_occur()?;
+        unsafe {
+            ffi::mysql_stmt_store_result(self.stmt.as_ptr());
+        }
+        let ret = StatementUse { inner: self };
+        ret.inner.did_an_error_occur()?;
+        Ok(ret)
+    }
+}
+
+impl<DB: MysqlLikeBackend> Drop for Statement<DB> {
+    fn drop(&mut self) {
+        unsafe { ffi::mysql_stmt_close(self.stmt.as_ptr()) };
+    }
+}
+
+#[allow(missing_debug_implementations)]
+pub(super) struct StatementUse<'a, DB: MysqlLikeBackend> {
+    inner: MaybeCached<'a, Statement<DB>>,
+}
+
+impl<DB: MysqlLikeBackend> StatementUse<'_, DB> {
+    pub(in crate::mysql_like::connection) fn affected_rows(&self) -> QueryResult<usize> {
+        let affected_rows = unsafe { ffi::mysql_stmt_affected_rows(self.inner.stmt.as_ptr()) };
+        affected_rows
+            .try_into()
+            .map_err(|e| Error::DeserializationError(Box::new(e)))
+    }
+
+    /// The executed statement's `mysql_stmt_insert_id`, zero when it set no
+    /// `AUTO_INCREMENT` value.
+    ///
+    /// The C API calls that zero "undefined", meaning an unspecified value and
+    /// not undefined behaviour: only a statement returning a result set can
+    /// inherit a stale id from the connection.
+    pub(in crate::mysql_like::connection) fn insert_id(&self) -> u64 {
+        // SAFETY: `self.inner` holds a live `MYSQL_STMT` and this reads an
+        // initialised scalar field.
+        unsafe { ffi::mysql_stmt_insert_id(self.inner.stmt.as_ptr()) }
+    }
+
+    /// This function should be called after `execute` only
+    /// otherwise it's not guaranteed to return a valid result
+    pub(in crate::mysql_like::connection) unsafe fn result_size(&mut self) -> QueryResult<usize> {
+        let size = unsafe { ffi::mysql_stmt_num_rows(self.inner.stmt.as_ptr()) };
+        usize::try_from(size).map_err(|e| Error::DeserializationError(Box::new(e)))
+    }
+
+    pub(super) fn populate_row_buffers(&self, binds: &mut OutputBinds) -> QueryResult<Option<()>> {
+        // We're about to call `mysql_stmt_fetch` we need to check if our binds are still valid
+        if binds.are_invalid() {
+            binds.bind_results(self)?;
+        }
+        let next_row_result = unsafe { ffi::mysql_stmt_fetch(self.inner.stmt.as_ptr()) };
+        if next_row_result < 0 {
+            self.inner.did_an_error_occur().map(Some)
+        } else {
+            #[allow(clippy::cast_sign_loss)] // that's how it's supposed to be based on the API
+            match next_row_result as libc::c_uint {
+                ffi::MYSQL_NO_DATA => Ok(None),
+                ffi::MYSQL_DATA_TRUNCATED => binds.populate_dynamic_buffers(self).map(Some),
+                0 => {
+                    binds.update_buffer_lengths();
+                    Ok(Some(()))
+                }
+                _error => self.inner.did_an_error_occur().map(Some),
+            }
+        }
+    }
+
+    pub(in crate::mysql_like::connection) unsafe fn fetch_column(
+        &self,
+        bind: &mut ffi::MYSQL_BIND,
+        idx: usize,
+        offset: usize,
+    ) -> QueryResult<()> {
+        unsafe {
+            ffi::mysql_stmt_fetch_column(
+                self.inner.stmt.as_ptr(),
+                bind,
+                idx.try_into()
+                    .map_err(|e| Error::DeserializationError(Box::new(e)))?,
+                offset as libc::c_ulong,
+            );
+        }
+        self.inner.did_an_error_occur()
+    }
+
+    /// If the pointers referenced by the `MYSQL_BIND` structures are invalidated,
+    /// you must call this function again before calling `mysql_stmt_fetch`.
+    pub(in crate::mysql_like::connection) unsafe fn bind_result(
+        &self,
+        binds: *mut ffi::MYSQL_BIND,
+    ) -> QueryResult<()> {
+        unsafe { self.inner.bind_result(binds) }
+    }
+
+    pub(super) fn metadata(&self) -> QueryResult<StatementMetadata> {
+        use crate::result::Error::DeserializationError;
+
+        //At this stage the statement was executed and should therefore provide its metadata
+        self.inner
+            .metadata()?
+            .ok_or_else(|| DeserializationError("No metadata exists".into()))
+    }
+}
+
+impl<DB: MysqlLikeBackend> Drop for StatementUse<'_, DB> {
+    fn drop(&mut self) {
+        unsafe {
+            ffi::mysql_stmt_free_result(self.inner.stmt.as_ptr());
+        }
+    }
+}

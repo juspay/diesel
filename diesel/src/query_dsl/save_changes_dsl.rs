@@ -1,21 +1,41 @@
+#[cfg(any(
+    feature = "__sqlite-shared",
+    feature = "postgres",
+    feature = "mysql",
+    feature = "mariadb"
+))]
+use crate::Table;
 use crate::associations::HasTable;
-#[cfg(any(feature = "sqlite", feature = "mysql"))]
+#[cfg(any(feature = "__sqlite-shared", feature = "mysql", feature = "mariadb"))]
 use crate::associations::Identifiable;
 use crate::connection::Connection;
-#[cfg(any(feature = "sqlite", feature = "mysql"))]
+#[cfg(any(feature = "__sqlite-shared", feature = "mysql", feature = "mariadb"))]
 use crate::dsl::Find;
-#[cfg(any(feature = "sqlite", feature = "postgres", feature = "mysql"))]
+#[cfg(any(
+    feature = "__sqlite-shared",
+    feature = "postgres",
+    feature = "mysql",
+    feature = "mariadb"
+))]
 use crate::dsl::Update;
-#[cfg(any(feature = "sqlite", feature = "postgres", feature = "mysql"))]
-use crate::expression::{is_aggregate, MixedAggregates, ValidGrouping};
+#[cfg(any(
+    feature = "__sqlite-shared",
+    feature = "postgres",
+    feature = "mysql",
+    feature = "mariadb"
+))]
+use crate::expression::{MixedAggregates, ValidGrouping, is_aggregate};
 use crate::query_builder::{AsChangeset, IntoUpdateTarget};
-#[cfg(any(feature = "sqlite", feature = "mysql"))]
+#[cfg(any(feature = "__sqlite-shared", feature = "mysql", feature = "mariadb"))]
 use crate::query_dsl::methods::{ExecuteDsl, FindDsl};
-#[cfg(any(feature = "sqlite", feature = "postgres", feature = "mysql"))]
+#[cfg(any(
+    feature = "__sqlite-shared",
+    feature = "postgres",
+    feature = "mysql",
+    feature = "mariadb"
+))]
 use crate::query_dsl::{LoadQuery, RunQueryDsl};
 use crate::result::QueryResult;
-#[cfg(any(feature = "sqlite", feature = "postgres", feature = "mysql"))]
-use crate::Table;
 
 /// A trait defining how to update a record and fetch the updated entry
 /// on a certain backend.
@@ -40,7 +60,13 @@ impl<'b, Changes, Output> UpdateAndFetchResults<Changes, Output> for PgConnectio
 where
     Changes: Copy + AsChangeset<Target = <Changes as HasTable>::Table> + IntoUpdateTarget,
     Update<Changes, Changes>: LoadQuery<'b, PgConnection, Output>,
-    <Changes::Table as Table>::AllColumns: ValidGrouping<()>,
+    <Changes::Table as Table>::AllColumns: ValidGrouping<()>
+        + crate::expression::SelectableExpression<
+            crate::query_builder::returning::ReturningQuerySource<
+                crate::query_builder::returning::UpdateStmt,
+                Changes::Table,
+            >,
+        >,
     <<Changes::Table as Table>::AllColumns as ValidGrouping<()>>::IsAggregate:
         MixedAggregates<is_aggregate::No, Output = is_aggregate::No>,
 {
@@ -49,10 +75,10 @@ where
     }
 }
 
-#[cfg(feature = "sqlite")]
+#[cfg(feature = "__sqlite-shared")]
 use crate::sqlite::SqliteConnection;
 
-#[cfg(feature = "sqlite")]
+#[cfg(feature = "__sqlite-shared")]
 impl<'b, Changes, Output> UpdateAndFetchResults<Changes, Output> for SqliteConnection
 where
     Changes: Copy + Identifiable,
@@ -60,7 +86,13 @@ where
     Changes::Table: FindDsl<Changes::Id>,
     Update<Changes, Changes>: ExecuteDsl<SqliteConnection>,
     Find<Changes::Table, Changes::Id>: LoadQuery<'b, SqliteConnection, Output>,
-    <Changes::Table as Table>::AllColumns: ValidGrouping<()>,
+    <Changes::Table as Table>::AllColumns: ValidGrouping<()>
+        + crate::expression::SelectableExpression<
+            crate::query_builder::returning::ReturningQuerySource<
+                crate::query_builder::returning::UpdateStmt,
+                Changes::Table,
+            >,
+        >,
     <<Changes::Table as Table>::AllColumns as ValidGrouping<()>>::IsAggregate:
         MixedAggregates<is_aggregate::No, Output = is_aggregate::No>,
 {
@@ -81,7 +113,40 @@ where
     Changes::Table: FindDsl<Changes::Id>,
     Update<Changes, Changes>: ExecuteDsl<MysqlConnection>,
     Find<Changes::Table, Changes::Id>: LoadQuery<'b, MysqlConnection, Output>,
-    <Changes::Table as Table>::AllColumns: ValidGrouping<()>,
+    <Changes::Table as Table>::AllColumns: ValidGrouping<()>
+        + crate::expression::SelectableExpression<
+            crate::query_builder::returning::ReturningQuerySource<
+                crate::query_builder::returning::UpdateStmt,
+                Changes::Table,
+            >,
+        >,
+    <<Changes::Table as Table>::AllColumns as ValidGrouping<()>>::IsAggregate:
+        MixedAggregates<is_aggregate::No, Output = is_aggregate::No>,
+{
+    fn update_and_fetch(&mut self, changeset: Changes) -> QueryResult<Output> {
+        crate::update(changeset).set(changeset).execute(self)?;
+        Changes::table().find(changeset.id()).get_result(self)
+    }
+}
+
+#[cfg(feature = "mariadb")]
+use crate::mariadb::MariadbConnection;
+
+#[cfg(feature = "mariadb")]
+impl<'b, Changes, Output> UpdateAndFetchResults<Changes, Output> for MariadbConnection
+where
+    Changes: Copy + Identifiable,
+    Changes: AsChangeset<Target = <Changes as HasTable>::Table> + IntoUpdateTarget,
+    Changes::Table: FindDsl<Changes::Id>,
+    Update<Changes, Changes>: ExecuteDsl<MariadbConnection>,
+    Find<Changes::Table, Changes::Id>: LoadQuery<'b, MariadbConnection, Output>,
+    <Changes::Table as Table>::AllColumns: ValidGrouping<()>
+        + crate::expression::SelectableExpression<
+            crate::query_builder::returning::ReturningQuerySource<
+                crate::query_builder::returning::UpdateStmt,
+                Changes::Table,
+            >,
+        >,
     <<Changes::Table as Table>::AllColumns as ValidGrouping<()>>::IsAggregate:
         MixedAggregates<is_aggregate::No, Output = is_aggregate::No>,
 {
@@ -106,10 +171,10 @@ where
 /// #
 /// #[derive(Queryable, Debug, PartialEq)]
 /// struct Animal {
-///    id: i32,
-///    species: String,
-///    legs: i32,
-///    name: Option<String>,
+///     id: i32,
+///     species: String,
+///     legs: i32,
+///     name: Option<String>,
 /// }
 ///
 /// #[derive(AsChangeset, Identifiable)]
@@ -119,6 +184,11 @@ where
 ///     name: &'a str,
 /// }
 ///
+/// # // Reading the query result requires reading memory allocated by the
+/// # // native sqlite library, which miri cannot track provenance for.
+/// # #[cfg(miri)]
+/// # fn main() {}
+/// # #[cfg(not(miri))]
 /// # fn main() {
 /// #     run_test();
 /// # }
@@ -126,7 +196,10 @@ where
 /// # fn run_test() -> QueryResult<()> {
 /// #     use self::animals::dsl::*;
 /// #     let connection = &mut establish_connection();
-/// let form = AnimalForm { id: 2, name: "Super scary" };
+/// let form = AnimalForm {
+///     id: 2,
+///     name: "Super scary",
+/// };
 /// let changed_animal = form.save_changes(connection)?;
 /// let expected_animal = Animal {
 ///     id: 2,

@@ -1,17 +1,14 @@
 use super::find_project_root;
 use crate::infer_schema_internals::TableName;
-use crate::print_schema::ColumnSorting;
-use crate::print_schema::{self, DocConfig};
-use clap::ArgMatches;
+use crate::print_schema::{self, ColumnSorting, DocConfig, PrintSchemaArgs};
 use serde::de::{self, MapAccess, Visitor};
 use serde::{Deserialize, Deserializer};
 use serde_regex::Serde as RegexWrapper;
 use std::collections::btree_map::Entry;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::ops::Bound;
 use std::path::{Path, PathBuf};
-use std::{env, fmt};
-use std::{fs, iter};
+use std::{env, fmt, fs, iter};
 
 #[derive(Deserialize, Default, Debug)]
 #[serde(deny_unknown_fields)]
@@ -22,38 +19,22 @@ pub struct Config {
     pub migrations_directory: Option<MigrationsDirectory>,
 }
 
-fn get_values_with_indices<T: Clone + Send + Sync + 'static>(
-    matches: &ArgMatches,
-    id: &str,
-) -> Result<Option<BTreeMap<usize, T>>, crate::errors::Error> {
-    match matches.indices_of(id) {
-        Some(indices) => match matches.try_get_many::<T>(id) {
-            Ok(Some(values)) => Ok(Some(
-                indices
-                    .zip(values)
-                    .map(|(index, value)| (index, value.clone()))
-                    .collect(),
-            )),
-            Ok(None) => {
-                unreachable!("`ids` only reports what is present")
-            }
-            Err(e) => Err(e.into()),
-        },
-        None => Ok(None),
-    }
+fn get_values_with_indices<'a, T: Clone + Send + Sync + 'static>(
+    indices: Option<&[usize]>,
+    values: &'a [T],
+) -> Option<BTreeMap<usize, &'a T>> {
+    Some(indices?.iter().copied().zip(values).collect())
 }
 
 impl Config {
-    pub fn file_path(matches: &ArgMatches) -> PathBuf {
-        matches
-            .get_one::<PathBuf>("CONFIG_FILE")
-            .cloned()
+    pub fn file_path(config_file: Option<PathBuf>) -> PathBuf {
+        config_file
             .or_else(|| env::var_os("DIESEL_CONFIG_FILE").map(PathBuf::from))
             .unwrap_or_else(|| find_project_root().unwrap_or_default().join("diesel.toml"))
     }
 
-    pub fn read(matches: &ArgMatches) -> Result<Self, crate::errors::Error> {
-        let path = Self::file_path(matches);
+    pub fn read(config_file: Option<std::path::PathBuf>) -> Result<Self, crate::errors::Error> {
+        let path = Self::file_path(config_file);
 
         if path.exists() {
             let content = fs::read_to_string(&path)
@@ -76,25 +57,38 @@ impl Config {
         }
     }
 
-    pub fn set_filter(mut self, matches: &ArgMatches) -> Result<Self, crate::errors::Error> {
+    pub fn set_filter(
+        mut self,
+        print_schema: &PrintSchemaArgs,
+    ) -> Result<Self, crate::errors::Error> {
         if self.print_schema.has_multiple_schema {
-            let selected_schema_keys =
-                get_values_with_indices::<String>(matches, "schema-key")?.unwrap_or_default();
-            let table_names_with_indices =
-                get_values_with_indices::<String>(matches, "table-name")?;
-            let only_tables_with_indices = get_values_with_indices::<bool>(matches, "only-tables")?;
-            let except_tables_with_indices =
-                get_values_with_indices::<bool>(matches, "except-tables")?;
+            let selected_schema_keys = get_values_with_indices(
+                print_schema.schema_key_indices.as_deref(),
+                &print_schema.inner.schema_key,
+            )
+            .unwrap_or_default();
+            let table_names_with_indices = get_values_with_indices(
+                print_schema.table_indices.as_deref(),
+                &print_schema.inner.table_name,
+            );
+            let only_tables_with_indices = get_values_with_indices(
+                print_schema.only_table_indices.as_deref(),
+                &print_schema.inner.only_tables,
+            );
+            let except_tables_with_indices = get_values_with_indices(
+                print_schema.except_table_indices.as_deref(),
+                &print_schema.inner.except_tables,
+            );
 
-            for (key, boundary) in selected_schema_keys.values().cloned().zip(
+            for (key, boundary) in selected_schema_keys.values().map(|k| k.as_str()).zip(
                 selected_schema_keys
                     .keys()
-                    .cloned()
+                    .copied()
                     .map(Bound::Included)
                     .zip(
                         selected_schema_keys
                             .keys()
-                            .cloned()
+                            .copied()
                             .skip(1)
                             .map(Bound::Excluded)
                             .chain(iter::once(Bound::Unbounded)),
@@ -103,202 +97,247 @@ impl Config {
                 let print_schema = self
                     .print_schema
                     .all_configs
-                    .get_mut(&key)
-                    .ok_or(crate::errors::Error::NoSchemaKeyFound(key))?;
-                if let Some(table_names_with_indices) = table_names_with_indices.clone() {
+                    .get_mut(key)
+                    .ok_or_else(|| crate::errors::Error::NoSchemaKeyFound(key.to_owned()))?;
+                if let Some(table_names_with_indices) = &table_names_with_indices {
                     let table_names = table_names_with_indices
                         .range(boundary)
-                        .map(|(_, v)| v.clone())
-                        .map(|table_name_regex| {
-                            regex::Regex::new(&table_name_regex).map(Into::into)
-                        })
+                        .map(|(_, v)| v.as_str())
+                        .map(|table_name_regex| regex::Regex::new(table_name_regex).map(Into::into))
                         .collect::<Result<Vec<Regex>, _>>()?;
                     if table_names.is_empty() {
                         continue;
                     }
-                    if only_tables_with_indices
-                        .clone()
-                        .and_then(|only_tables_with_indices| {
-                            only_tables_with_indices
-                                .range(boundary)
-                                .nth(0)
-                                .map(|v| *v.1)
-                        })
-                        .unwrap_or(false)
-                    {
-                        print_schema.filter = Filtering::OnlyTables(table_names.clone());
-                    }
                     if except_tables_with_indices
-                        .clone()
+                        .as_ref()
                         .and_then(|except_tables_with_indices| {
                             except_tables_with_indices
                                 .range(boundary)
                                 .nth(0)
-                                .map(|v| *v.1)
+                                .map(|v| **v.1)
                         })
                         .unwrap_or(false)
                     {
                         print_schema.filter = Filtering::ExceptTables(table_names);
+                    } else if only_tables_with_indices
+                        .as_ref()
+                        .and_then(|only_tables_with_indices| {
+                            only_tables_with_indices
+                                .range(boundary)
+                                .nth(0)
+                                .map(|v| **v.1)
+                        })
+                        .unwrap_or(false)
+                    {
+                        print_schema.filter = Filtering::OnlyTables(table_names);
                     }
                 }
             }
         } else {
-            let print_schema = self
-                .print_schema
-                .all_configs
-                .entry("default".to_string())
-                .or_insert(PrintSchema::default().set_filter(matches)?);
-            let print_schema = print_schema.clone().set_filter(matches)?;
             self.print_schema
                 .all_configs
                 .entry("default".to_string())
-                .and_modify(|v| *v = print_schema);
+                .or_default()
+                .set_filter(
+                    &print_schema.inner.table_name,
+                    &print_schema.inner.only_tables,
+                    &print_schema.inner.except_tables,
+                )?;
         }
         Ok(self)
     }
 
-    pub fn update_config(mut self, matches: &ArgMatches) -> Result<Self, crate::errors::Error> {
+    pub fn update_config(mut self, args: PrintSchemaArgs) -> Result<Self, crate::errors::Error> {
         if self.print_schema.has_multiple_schema {
             if let Some(selected_schema_keys) =
-                get_values_with_indices::<String>(matches, "schema-key")?
+                get_values_with_indices(args.schema_key_indices.as_deref(), &args.inner.schema_key)
             {
-                let schema_with_indices = get_values_with_indices::<String>(matches, "schema")?;
-                let with_docs_with_indices = get_values_with_indices::<bool>(matches, "with-docs")?;
-                let with_docs_config_with_indices =
-                    get_values_with_indices::<String>(matches, "with-docs-config")?;
-                let patch_file_with_indices =
-                    get_values_with_indices::<PathBuf>(matches, "patch-file")?;
-                let column_sorting_with_indices =
-                    get_values_with_indices::<String>(matches, "column-sorting")?;
-                let import_types_with_indices =
-                    get_values_with_indices::<String>(matches, "import-types")?;
-                let generate_custom_type_definitions_with_indices =
-                    get_values_with_indices::<bool>(matches, "generate-custom-type-definitions")?;
-                let custom_type_derives_with_indices =
-                    get_values_with_indices::<String>(matches, "custom-type-derives")?;
-                let sqlite_integer_primary_key_is_bigint_with_indices =
-                    get_values_with_indices::<bool>(
-                        matches,
-                        "sqlite-integer-primary-key-is-bigint",
-                    )?;
-                let except_custom_type_definitions_with_indices =
-                    get_values_with_indices::<Vec<Regex>>(
-                        matches,
-                        "except-custom-type-definitions",
-                    )?;
+                let schema_with_indices =
+                    get_values_with_indices(args.schema_indices.as_deref(), &args.inner.schema);
+                let with_docs_with_indices = get_values_with_indices(
+                    args.with_docs_indices.as_deref(),
+                    &args.inner.with_docs,
+                );
+                let with_docs_config_with_indices = get_values_with_indices(
+                    args.with_docs_config_indices.as_deref(),
+                    &args.inner.with_docs_config,
+                );
+                let allow_tables_to_appear_in_same_query_config_with_indices =
+                    get_values_with_indices(
+                        args.allow_tables_appear_in_same_query_indices.as_deref(),
+                        &args.inner.allow_tables_to_appear_in_same_query_config,
+                    );
+                let patch_file_with_indices = get_values_with_indices(
+                    args.patch_file_indices.as_deref(),
+                    &args.inner.patch_file,
+                );
+                let column_sorting_with_indices = get_values_with_indices(
+                    args.column_sorting_indices.as_deref(),
+                    &args.inner.column_sorting,
+                );
+                let import_types_with_indices = get_values_with_indices(
+                    args.import_types_indices.as_deref(),
+                    &args.inner.import_types,
+                );
+                let custom_type_derives_with_indices = get_values_with_indices(
+                    args.custom_type_derives_indices.as_deref(),
+                    &args.inner.custom_type_derives,
+                );
+                let custom_rust_enum_type_derives_with_indices = get_values_with_indices(
+                    args.custom_rust_enum_type_derives_indices.as_deref(),
+                    &args.inner.custom_rust_enum_type_derives,
+                );
+                let sqlite_integer_primary_key_is_bigint_with_indices = get_values_with_indices(
+                    args.sqlite_integer_primary_key_is_bigint_indices.as_deref(),
+                    &args.inner.sqlite_integer_primary_key_is_bigint,
+                );
+                let except_custom_type_definitions_with_indices = get_values_with_indices(
+                    args.except_custom_type_definitions_indices.as_deref(),
+                    &args.inner.except_custom_type_definitions,
+                );
+                let include_views_with_indices = get_values_with_indices(
+                    args.include_views_indices.as_deref(),
+                    &args.inner.include_views,
+                );
+                let experimental_infer_nullable_for_views_with_indices = get_values_with_indices(
+                    args.experimental_infer_nullable_for_views_indices
+                        .as_deref(),
+                    &args.inner.experimental_infer_nullable_for_views,
+                );
 
-                for (key, boundary) in selected_schema_keys.values().cloned().zip(
+                for (key, boundary) in selected_schema_keys.values().map(|k| k.as_str()).zip(
                     selected_schema_keys
                         .keys()
-                        .cloned()
+                        .copied()
                         .map(Bound::Included)
                         .zip(
                             selected_schema_keys
                                 .keys()
-                                .cloned()
+                                .copied()
                                 .skip(1)
                                 .map(Bound::Excluded)
                                 .chain(iter::once(Bound::Unbounded)),
                         ),
                 ) {
-                    let print_schema = self
-                        .print_schema
-                        .all_configs
-                        .get_mut(&key)
-                        .ok_or(crate::errors::Error::NoSchemaKeyFound(key))?;
+                    let print_schema =
+                        self.print_schema.all_configs.get_mut(key).ok_or_else(|| {
+                            crate::errors::Error::NoSchemaKeyFound(key.to_owned())
+                        })?;
                     if let Some(schema) = schema_with_indices
-                        .clone()
-                        .and_then(|v| v.range(boundary).nth(0).map(|v| v.1.clone()))
+                        .as_ref()
+                        .and_then(|v| v.range(boundary).nth(0).map(|v| v.1.as_str()))
                     {
-                        print_schema.schema = Some(schema)
+                        print_schema.schema = Some(schema.to_owned());
                     }
                     if with_docs_with_indices
-                        .clone()
+                        .as_ref()
                         .and_then(|with_docs_with_indices| {
-                            with_docs_with_indices.range(boundary).nth(0).map(|v| *v.1)
+                            with_docs_with_indices.range(boundary).nth(0).map(|v| **v.1)
                         })
                         .unwrap_or(false)
                     {
                         print_schema.with_docs =
                             DocConfig::DatabaseCommentsFallbackToAutoGeneratedDocComment;
                     }
+                    if let Some(include_views) = include_views_with_indices
+                        .as_ref()
+                        .and_then(|v| v.range(boundary).nth(0).map(|v| v.1))
+                    {
+                        print_schema.include_views = **include_views;
+                    }
+                    if let Some(experimental_infer_nullable_for_views) =
+                        experimental_infer_nullable_for_views_with_indices
+                            .as_ref()
+                            .and_then(|v| v.range(boundary).nth(0).map(|v| v.1))
+                    {
+                        print_schema.experimental_infer_nullable_for_views =
+                            **experimental_infer_nullable_for_views;
+                    }
 
                     if let Some(doc_config) = with_docs_config_with_indices
-                        .clone()
-                        .and_then(|v| v.range(boundary).nth(0).map(|v| v.1.clone()))
+                        .as_ref()
+                        .and_then(|v| v.range(boundary).nth(0).map(|v| v.1))
                     {
-                        print_schema.with_docs = doc_config.parse().map_err(|_| {
-                            crate::errors::Error::UnsupportedFeature(format!(
-                                "Invalid documentation config mode: {doc_config}"
-                            ))
-                        })?;
+                        print_schema.with_docs = **doc_config;
+                    }
+
+                    if let Some(allow_tables_to_appear_in_same_query_config) =
+                        allow_tables_to_appear_in_same_query_config_with_indices
+                            .as_ref()
+                            .and_then(|v| v.range(boundary).nth(0).map(|v| v.1))
+                    {
+                        print_schema.allow_tables_to_appear_in_same_query_config =
+                            **allow_tables_to_appear_in_same_query_config;
                     }
 
                     if let Some(sorting) = column_sorting_with_indices
-                        .clone()
-                        .and_then(|v| v.range(boundary).nth(0).map(|v| v.1.clone()))
+                        .as_ref()
+                        .and_then(|v| v.range(boundary).nth(0).map(|v| v.1))
                     {
-                        match sorting.as_str() {
-                            "ordinal_position" => {
-                                print_schema.column_sorting = ColumnSorting::OrdinalPosition
-                            }
-                            "name" => print_schema.column_sorting = ColumnSorting::Name,
-                            _ => {
-                                return Err(crate::errors::Error::UnsupportedFeature(format!(
-                                    "Invalid column sorting mode: {sorting}"
-                                )));
-                            }
-                        }
+                        print_schema.column_sorting = **sorting;
                     }
 
                     if let Some(patch_file) = patch_file_with_indices
-                        .clone()
-                        .and_then(|v| v.range(boundary).nth(0).map(|v| v.1.clone()))
+                        .as_ref()
+                        .and_then(|v| v.range(boundary).nth(0).map(|v| v.1.as_path()))
                     {
-                        print_schema.patch_file = Some(patch_file);
+                        print_schema.patch_file = Some(patch_file.to_owned());
                     }
 
                     let import_types = import_types_with_indices
-                        .clone()
-                        .map(|v| v.range(boundary).map(|v| v.1.clone()).collect())
+                        .as_ref()
+                        .map(|v| v.range(boundary).map(|v| v.1.as_str().to_owned()).collect())
                         .unwrap_or(vec![]);
                     if !import_types.is_empty() {
                         print_schema.import_types = Some(import_types);
                     }
 
-                    if generate_custom_type_definitions_with_indices
-                        .clone()
-                        .and_then(|generate_custom_type_definitions_with_indices| {
-                            generate_custom_type_definitions_with_indices
-                                .range(boundary)
-                                .nth(0)
-                                .map(|v| *v.1)
-                        })
-                        .unwrap_or(false)
-                    {
+                    if args.inner.no_generate_missing_sql_type_definitions {
                         print_schema.generate_missing_sql_type_definitions = Some(false)
                     }
+                    if args.inner.no_generate_rust_enum_types {
+                        print_schema.generate_rust_enum_definitions = Some(false);
+                    }
 
-                    if let Some(except_rules) = &except_custom_type_definitions_with_indices {
-                        if let Some(rules) = except_rules.range(boundary).nth(0) {
-                            print_schema
-                                .except_custom_type_definitions
-                                .clone_from(rules.1);
+                    if let Some(excepts) = &except_custom_type_definitions_with_indices {
+                        let rules = excepts
+                            .range(boundary)
+                            .map(|(_, v)| v.as_str())
+                            .map(|rx| regex::Regex::new(rx).map(Into::into))
+                            .collect::<Result<Vec<Regex>, _>>()?;
+
+                        if !rules.is_empty() {
+                            print_schema.except_custom_type_definitions = rules;
                         }
                     }
 
                     let custom_type_derives = custom_type_derives_with_indices
-                        .clone()
-                        .map(|v| v.range(boundary).map(|v| v.1.clone()).collect())
-                        .unwrap_or(vec![]);
+                        .as_ref()
+                        .map(|v| {
+                            v.range(boundary)
+                                .map(|v| v.1.as_str().to_owned())
+                                .collect::<BTreeSet<_>>()
+                        })
+                        .unwrap_or_default();
                     if !custom_type_derives.is_empty() {
                         print_schema.custom_type_derives = Some(custom_type_derives);
                     }
+                    let custom_rust_enum_type_derives = custom_rust_enum_type_derives_with_indices
+                        .as_ref()
+                        .map(|v| {
+                            v.range(boundary)
+                                .map(|v| v.1.as_str().to_owned())
+                                .collect::<BTreeSet<_>>()
+                        })
+                        .unwrap_or_default();
+                    if !custom_rust_enum_type_derives.is_empty() {
+                        print_schema.custom_enum_derives = Some(custom_rust_enum_type_derives);
+                    }
                     if let Some(sqlite_integer_primary_key_is_bigint) =
                         sqlite_integer_primary_key_is_bigint_with_indices
-                            .clone()
+                            .as_ref()
                             .and_then(|with_docs_with_indices| {
-                                with_docs_with_indices.range(boundary).nth(0).map(|v| *v.1)
+                                with_docs_with_indices.range(boundary).nth(0).map(|v| **v.1)
                             })
                     {
                         print_schema.sqlite_integer_primary_key_is_bigint =
@@ -311,58 +350,80 @@ impl Config {
                 Entry::Vacant(entry) => entry.insert(PrintSchema::default()),
                 Entry::Occupied(entry) => entry.into_mut(),
             };
-            if let Some(schema_name) = matches.get_one::<String>("schema") {
-                config.schema = Some(schema_name.clone())
+            let args = args.inner;
+            if let Some(schema_name) = args.schema.first() {
+                config.schema = Some(schema_name.to_owned())
             }
-            if matches.get_flag("with-docs") {
+            if let Some(include_views) = args.include_views.first() {
+                config.include_views = *include_views;
+            }
+            if let Some(experimental_infer_nullable_for_views) =
+                args.experimental_infer_nullable_for_views.first()
+            {
+                config.experimental_infer_nullable_for_views =
+                    *experimental_infer_nullable_for_views;
+            }
+            if args.with_docs.last().cloned().unwrap_or(false) {
                 config.with_docs = DocConfig::DatabaseCommentsFallbackToAutoGeneratedDocComment;
             }
-            if let Some(doc_config) = matches.get_one::<String>("with-docs-config") {
-                config.with_docs = doc_config.parse().map_err(|_| {
-                    crate::errors::Error::UnsupportedFeature(format!(
-                        "Invalid documentation config mode: {doc_config}"
-                    ))
-                })?;
+
+            if let Some(docs_config) = args.with_docs_config.first() {
+                config.with_docs = docs_config.to_owned();
             }
 
-            if let Some(sorting) = matches.get_one::<String>("column-sorting") {
-                match sorting as &str {
-                    "ordinal_position" => config.column_sorting = ColumnSorting::OrdinalPosition,
-                    "name" => config.column_sorting = ColumnSorting::Name,
-                    _ => {
-                        return Err(crate::errors::Error::UnsupportedFeature(format!(
-                            "Invalid column sorting mode: {sorting}"
-                        )));
-                    }
-                }
+            if let Some(allow_tables_to_appear_in_same_query_config) =
+                args.allow_tables_to_appear_in_same_query_config.first()
+            {
+                config.allow_tables_to_appear_in_same_query_config =
+                    allow_tables_to_appear_in_same_query_config.to_owned();
             }
 
-            if let Some(path) = matches.get_one::<PathBuf>("patch-file") {
-                config.patch_file = Some(path.clone());
+            if let Some(sorting) = args.column_sorting.first() {
+                config.column_sorting = sorting.to_owned();
             }
 
-            if let Some(types) = matches.get_many("import-types") {
-                let types = types.cloned().collect();
-                config.import_types = Some(types);
+            if let Some(path) = args.patch_file.first() {
+                config.patch_file = Some(path.to_owned());
             }
 
-            if let Some(except_rules) = matches.get_many("except-custom-type-definitions") {
-                let regexes: Vec<String> = except_rules.cloned().collect();
-                config.except_custom_type_definitions = regexes
+            if !args.import_types.is_empty() {
+                config.import_types = Some(args.import_types);
+            }
+
+            if !args.except_custom_type_definitions.is_empty() {
+                config.except_custom_type_definitions = args
+                    .except_custom_type_definitions
                     .into_iter()
                     .map(|x| regex::Regex::new(&x).map(Into::into))
                     .collect::<Result<Vec<Regex>, _>>()?;
             }
 
-            if matches.get_flag("generate-custom-type-definitions") {
+            if args.no_generate_missing_sql_type_definitions {
                 config.generate_missing_sql_type_definitions = Some(false);
             }
-
-            if let Some(derives) = matches.get_many("custom-type-derives") {
-                let derives = derives.cloned().collect();
-                config.custom_type_derives = Some(derives);
+            if args.no_generate_rust_enum_types {
+                config.generate_rust_enum_definitions = Some(false);
             }
-            if matches.get_flag("sqlite-integer-primary-key-is-bigint") {
+
+            if !args.custom_type_derives.is_empty() {
+                config.custom_type_derives = Some(args.custom_type_derives.into_iter().collect());
+            }
+            if !args.custom_rust_enum_type_derives.is_empty() {
+                config.custom_enum_derives =
+                    Some(args.custom_rust_enum_type_derives.into_iter().collect());
+            }
+
+            if !args.pg_domains_as_custom_types.is_empty() {
+                config.pg_domains_as_custom_types = args
+                    .pg_domains_as_custom_types
+                    .into_iter()
+                    .map(|x| regex::Regex::new(&x).map(Into::into))
+                    .collect::<Result<Vec<Regex>, _>>()?;
+            }
+
+            if let Some(&last_val) = args.sqlite_integer_primary_key_is_bigint.last()
+                && last_val
+            {
                 config.sqlite_integer_primary_key_is_bigint = Some(true);
             }
         }
@@ -411,6 +472,10 @@ impl<'de> Deserialize<'de> for RootPrintSchema {
 }
 
 impl RootPrintSchema {
+    pub fn has_multiple_schema(&self) -> bool {
+        self.has_multiple_schema
+    }
+
     fn set_relative_path_base(&mut self, base: &Path) {
         for config in self.all_configs.values_mut() {
             config.set_relative_path_base(base);
@@ -426,6 +491,9 @@ pub struct PrintSchema {
     #[serde(default)]
     pub with_docs: print_schema::DocConfig,
     #[serde(default)]
+    pub allow_tables_to_appear_in_same_query_config:
+        print_schema::AllowTablesToAppearInSameQueryConfig,
+    #[serde(default)]
     pub filter: Filtering,
     #[serde(default)]
     pub column_sorting: ColumnSorting,
@@ -440,14 +508,32 @@ pub struct PrintSchema {
     #[serde(default)]
     pub except_custom_type_definitions: Vec<Regex>,
     #[serde(default)]
-    pub custom_type_derives: Option<Vec<String>>,
+    pub custom_type_derives: Option<BTreeSet<String>>,
     #[serde(default)]
     pub sqlite_integer_primary_key_is_bigint: Option<bool>,
+    #[serde(default)]
+    pub pg_domains_as_custom_types: Vec<Regex>,
+    #[serde(default)]
+    pub include_views: bool,
+    #[serde(default)]
+    pub experimental_infer_nullable_for_views: bool,
+    /// Additional derives for generated Rust enums. Defaults to `Clone`, `Copy`, `PartialEq` and
+    /// `Eq` if not specified.
+    ///
+    /// `Debug` and `diesel::types::Enum` are always included.
+    #[serde(default)]
+    pub custom_enum_derives: Option<BTreeSet<String>>,
+    #[serde(default)]
+    pub generate_rust_enum_definitions: Option<bool>,
 }
 
 impl PrintSchema {
     pub fn generate_missing_sql_type_definitions(&self) -> bool {
         self.generate_missing_sql_type_definitions.unwrap_or(true)
+    }
+
+    pub fn generate_rust_enum_definitions(&self) -> bool {
+        self.generate_rust_enum_definitions.unwrap_or(true)
     }
 
     pub fn schema_name(&self) -> Option<&str> {
@@ -462,57 +548,55 @@ impl PrintSchema {
     // https://github.com/rust-lang/rust-clippy/issues/12856
     #[allow(clippy::needless_borrows_for_generic_args)]
     fn set_relative_path_base(&mut self, base: &Path) {
-        if let Some(ref mut file) = self.file {
-            if file.is_relative() {
-                *file = base.join(&file);
-            }
-        }
-
-        if let Some(ref mut patch_file) = self.patch_file {
-            if patch_file.is_relative() {
-                *patch_file = base.join(&patch_file);
-            }
-        }
-    }
-
-    #[cfg(any(feature = "postgres", feature = "mysql"))]
-    pub fn custom_type_derives(&self) -> Vec<String> {
-        let mut derives = self
-            .custom_type_derives
-            .as_ref()
-            .map_or(Vec::new(), |derives| derives.to_vec());
-        if derives
-            .iter()
-            .any(|item| item == "diesel::sql_types::SqlType")
+        if let Some(ref mut file) = self.file
+            && file.is_relative()
         {
-            derives
-        } else {
-            derives.push("diesel::sql_types::SqlType".to_owned());
-            derives
+            *file = base.join(&file);
+        }
+
+        if let Some(ref mut patch_file) = self.patch_file
+            && patch_file.is_relative()
+        {
+            *patch_file = base.join(&patch_file);
         }
     }
 
-    pub fn set_filter(mut self, matches: &ArgMatches) -> Result<Self, crate::errors::Error> {
-        let table_names = matches
-            .get_many::<String>("table-name")
-            .unwrap_or_default()
+    pub fn custom_type_derives(&self) -> BTreeSet<String> {
+        let mut derives = self.custom_type_derives.clone().unwrap_or_default();
+        derives.insert("diesel::sql_types::SqlType".to_owned());
+        derives
+    }
+
+    pub fn custom_rust_types_derives(&self) -> BTreeSet<String> {
+        let mut derives = match self.custom_enum_derives.clone() {
+            Some(derives) => derives,
+            None => BTreeSet::from(["Clone", "Copy", "PartialEq", "Eq"].map(str::to_owned)),
+        };
+        derives.insert("diesel::types::Enum".into());
+        derives.insert("Debug".into());
+        derives
+    }
+
+    pub fn set_filter(
+        &mut self,
+        table_names: &[String],
+        only_tables: &[bool],
+        except_tables: &[bool],
+    ) -> Result<(), crate::errors::Error> {
+        let table_names = table_names
+            .iter()
             .map(|table_name_regex| regex::Regex::new(table_name_regex).map(Into::into))
             .collect::<Result<Vec<Regex>, _>>()?;
 
-        if matches
-            .try_get_one::<bool>("only-tables")?
-            .cloned()
-            .unwrap_or(false)
-        {
+        let only_tables = only_tables.last().cloned().unwrap_or(false);
+        let except_tables = except_tables.last().cloned().unwrap_or(false);
+
+        if only_tables {
             self.filter = Filtering::OnlyTables(table_names)
-        } else if matches
-            .try_get_one::<bool>("except-tables")?
-            .cloned()
-            .unwrap_or(false)
-        {
+        } else if except_tables {
             self.filter = Filtering::ExceptTables(table_names)
         }
-        Ok(self)
+        Ok(())
     }
 }
 
@@ -532,18 +616,12 @@ impl MigrationsDirectory {
 
 type Regex = RegexWrapper<::regex::Regex>;
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub enum Filtering {
     OnlyTables(Vec<Regex>),
     ExceptTables(Vec<Regex>),
+    #[default]
     None,
-}
-
-#[allow(clippy::derivable_impls)] // that's not supported on rust 1.65
-impl Default for Filtering {
-    fn default() -> Self {
-        Filtering::None
-    }
 }
 
 impl Filtering {

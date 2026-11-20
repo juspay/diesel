@@ -1,7 +1,6 @@
-use argon2::{
-    password_hash::{PasswordHash, PasswordHasher, PasswordVerifier, SaltString},
-    Argon2,
-};
+use argon2::Argon2;
+use argon2::password_hash::phc::{PasswordHash, Salt};
+use argon2::password_hash::{PasswordHasher, PasswordVerifier};
 use diesel::prelude::*;
 use diesel::{self, insert_into};
 
@@ -64,11 +63,12 @@ fn find_user(
         .map_err(AuthenticationError::DatabaseError)?;
 
     if let Some(user_and_password) = user_and_password {
-        let parsed_hash = PasswordHash::new(&user_and_password.password)?;
+        let parsed_hash = PasswordHash::new(&user_and_password.password)
+            .map_err(argon2::password_hash::Error::from)?;
         Argon2::default()
             .verify_password(password.as_bytes(), &parsed_hash)
             .map_err(|e| match e {
-                argon2::password_hash::Error::Password => IncorrectPassword,
+                argon2::password_hash::Error::PasswordInvalid => IncorrectPassword,
                 _ => AuthenticationError::Argon2Error(e),
             })?;
         Ok(Some(user_and_password.user))
@@ -84,10 +84,10 @@ fn register_user(
 ) -> Result<User, AuthenticationError> {
     // In real applications you should never use a constant salt!!
     // Checkout https://cheatsheetseries.owasp.org/cheatsheets/Password_Storage_Cheat_Sheet.html#salting for details
-    let salt = SaltString::from_b64(SALT_STRING)?;
+    let salt = Salt::from_b64(SALT_STRING).map_err(argon2::password_hash::Error::from)?;
     let argon2 = Argon2::default();
     let hashed_password = argon2
-        .hash_password(password.as_bytes(), &salt)?
+        .hash_password_with_salt(password.as_bytes(), &salt)?
         .to_string();
     insert_into(users::table)
         .values((
@@ -127,10 +127,29 @@ mod tests {
     use assert_matches::assert_matches;
     use std::env;
 
+    fn test_password() -> String {
+        std::process::id().to_string()
+    }
+
+    fn different_test_password() -> String {
+        std::process::id().wrapping_add(1).to_string()
+    }
+
+    fn hash_test_password(password: &str) -> String {
+        let salt = Salt::from_b64(SALT_STRING).unwrap();
+        Argon2::default()
+            .hash_password_with_salt(password.as_bytes(), &salt)
+            .unwrap()
+            .to_string()
+    }
+
     #[test]
     fn current_user_from_env_fails_when_no_username_set() {
         let _guard = this_test_modifies_env();
-        env::remove_var("BLOG_USERNAME");
+        // There doesn't seem to be a better solution
+        unsafe {
+            env::remove_var("BLOG_USERNAME");
+        }
 
         let conn = &mut connection();
 
@@ -140,8 +159,11 @@ mod tests {
     #[test]
     fn current_user_from_env_fails_when_no_password_set() {
         let _guard = this_test_modifies_env();
-        env::remove_var("BLOG_PASSWORD");
-        env::set_var("BLOG_USERNAME", "sgrif");
+        // There doesn't seem to be a better solution
+        unsafe {
+            env::remove_var("BLOG_PASSWORD");
+            env::set_var("BLOG_USERNAME", "sgrif");
+        }
 
         let conn = &mut connection();
 
@@ -152,15 +174,16 @@ mod tests {
     fn current_user_returns_none_when_no_user_exists_with_username() {
         let conn = &mut connection();
 
-        assert_matches!(find_user(conn, "sgrif", "hunter2"), Ok(None));
+        assert_matches!(find_user(conn, "sgrif", &test_password()), Ok(None));
     }
 
     #[test]
     fn current_user_returns_the_user_if_it_has_the_same_password() {
         let conn = &mut connection();
 
-        let expected_user = register_user(conn, "sgrif", "hunter2").unwrap();
-        let user = find_user(conn, "sgrif", "hunter2").unwrap();
+        let password = test_password();
+        let expected_user = register_user(conn, "sgrif", &password).unwrap();
+        let user = find_user(conn, "sgrif", &password).unwrap();
 
         assert_eq!(Some(expected_user), user);
     }
@@ -169,9 +192,47 @@ mod tests {
     fn current_user_fails_if_password_does_not_match() {
         let conn = &mut connection();
 
-        register_user(conn, "sgrif", "letmein").unwrap();
-        let result = find_user(conn, "sgrif", "hunter2");
+        register_user(conn, "sgrif", &test_password()).unwrap();
+        let result = find_user(conn, "sgrif", &different_test_password());
 
         assert_matches!(result, Err(IncorrectPassword));
+    }
+
+    #[test]
+    fn current_user_verifies_a_stored_password_hash() {
+        let conn = &mut connection();
+        let password = test_password();
+        let hash = hash_test_password(&password);
+        let expected_user = insert_into(users::table)
+            .values((users::username.eq("sgrif"), users::hashed_password.eq(hash)))
+            .returning((users::id, users::username))
+            .get_result::<User>(conn)
+            .unwrap();
+
+        assert_eq!(
+            Some(expected_user),
+            find_user(conn, "sgrif", &password).unwrap()
+        );
+        assert_matches!(
+            find_user(conn, "sgrif", &different_test_password()),
+            Err(IncorrectPassword)
+        );
+    }
+
+    #[test]
+    fn current_user_reports_a_malformed_password_hash() {
+        let conn = &mut connection();
+        insert_into(users::table)
+            .values((
+                users::username.eq("sgrif"),
+                users::hashed_password.eq("not-a-phc-string"),
+            ))
+            .execute(conn)
+            .unwrap();
+
+        assert_matches!(
+            find_user(conn, "sgrif", &test_password()),
+            Err(AuthenticationError::Argon2Error(_))
+        );
     }
 }

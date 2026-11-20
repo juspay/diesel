@@ -1,10 +1,11 @@
-use std::fmt;
-
 use crate::backend::Backend;
-use crate::query_builder::{BindCollector, MoveableBindCollector, QueryBuilder};
+use crate::query_builder::{BindCollector, BindData, MoveableBindCollector, QueryBuilder};
 use crate::result::QueryResult;
 use crate::serialize::ToSql;
 use crate::sql_types::HasSqlType;
+use alloc::boxed::Box;
+use alloc::fmt;
+use alloc::vec::Vec;
 
 #[allow(missing_debug_implementations)]
 /// The primary type used when walking a Diesel AST during query execution.
@@ -90,13 +91,21 @@ where
         }
     }
 
+    /// Count the number of bind parameters for the given statement
+    pub(crate) fn count_binds(count: &'a mut usize, backend: &'b DB) -> Self {
+        AstPass {
+            internals: AstPassInternals::CountBinds(count),
+            backend,
+        }
+    }
+
     /// Register an internal flag whether or not diesel should
     /// generate explicitly qualified column names
     #[diesel_derives::__diesel_public_if(
         feature = "i-implement-a-third-party-backend-and-opt-into-breaking-changes"
     )]
     #[cfg(any(
-        feature = "sqlite",
+        feature = "__sqlite-shared",
         feature = "i-implement-a-third-party-backend-and-opt-into-breaking-changes"
     ))]
     pub(crate) fn skip_from(&mut self, value: bool) {
@@ -132,6 +141,7 @@ where
             }
             AstPassInternals::DebugBinds(ref mut f) => AstPassInternals::DebugBinds(f),
             AstPassInternals::IsNoop(ref mut result) => AstPassInternals::IsNoop(result),
+            AstPassInternals::CountBinds(ref mut count) => AstPassInternals::CountBinds(count),
         };
         AstPass {
             internals,
@@ -230,6 +240,9 @@ where
                 f.push(Box::new(bind));
             }
             AstPassInternals::IsNoop(ref mut result) => **result = false,
+            AstPassInternals::CountBinds(ref mut count) => {
+                **count += 1;
+            }
             _ => {}
         }
         Ok(())
@@ -255,6 +268,9 @@ where
             AstPassInternals::ToSql(ref mut out, _) => {
                 out.push_bind_param_value_only();
             }
+            AstPassInternals::CountBinds(ref mut count) => {
+                **count += 1;
+            }
             _ => {}
         }
         Ok(())
@@ -273,6 +289,7 @@ where
         bind_collector_data: &MD,
     ) -> QueryResult<()>
     where
+        MD: BindData,
         DB: Backend,
         for<'bc> DB::BindCollector<'bc>: MoveableBindCollector<DB, BindData = MD>,
     {
@@ -282,7 +299,10 @@ where
                 metadata_lookup: _,
             } => collector.append_bind_data(bind_collector_data),
             AstPassInternals::DebugBinds(ref mut f) => {
-                f.push(Box::new("Opaque bind collector data"))
+                DB::BindCollector::push_debug_binds(bind_collector_data, f);
+            }
+            AstPassInternals::CountBinds(ref mut count) => {
+                **count += bind_collector_data.len();
             }
             _ => {}
         }
@@ -295,7 +315,7 @@ where
         doc(hidden)
     )] // This is used by the `define_sql_function` macro
     #[cfg_attr(
-        docsrs,
+        diesel_docsrs,
         doc(cfg(feature = "i-implement-a-third-party-backend-and-opt-into-breaking-changes"))
     )]
     pub fn backend(&self) -> &DB {
@@ -308,7 +328,7 @@ where
         doc(hidden)
     )] // This is used by the `__diesel_column` macro
     #[cfg_attr(
-        docsrs,
+        diesel_docsrs,
         doc(cfg(feature = "i-implement-a-third-party-backend-and-opt-into-breaking-changes"))
     )]
     pub fn should_skip_from(&self) -> bool {
@@ -340,6 +360,7 @@ where
     IsSafeToCachePrepared(&'a mut bool),
     DebugBinds(&'a mut Vec<Box<dyn fmt::Debug + 'b>>),
     IsNoop(&'a mut bool),
+    CountBinds(&'a mut usize),
 }
 
 #[diesel_derives::__diesel_public_if(
@@ -385,6 +406,18 @@ where
     /// This function allows to access the inner bind collector if
     /// this `AstPass` represents a collect binds pass.
     fn bind_collector(&mut self) -> Option<(&mut DB::BindCollector<'b>, &mut DB::MetadataLookup)>;
+
+    /// This function allows to access the inner debug bind collector pass
+    fn debug_binds(&mut self) -> Option<(&mut Vec<Box<dyn fmt::Debug + 'b>>, &'b DB)>;
+
+    /// This function allows to access the inner count binds collector pass
+    fn count_binds(&mut self) -> Option<(&mut usize, &'b DB)>;
+
+    /// Construct a new AstPass for collecting bind values into the provided buffer
+    fn collect_debug_binds_pass(
+        formatter: &'a mut Vec<Box<dyn fmt::Debug + 'b>>,
+        backend: &'b DB,
+    ) -> AstPass<'a, 'b, DB>;
 }
 
 impl<'a, 'b, DB> AstPassHelper<'a, 'b, DB> for AstPass<'a, 'b, DB>
@@ -423,6 +456,7 @@ where
             }
             AstPassInternals::DebugBinds(b) => AstPassInternals::DebugBinds(b),
             AstPassInternals::IsNoop(b) => AstPassInternals::IsNoop(b),
+            AstPassInternals::CountBinds(count) => AstPassInternals::CountBinds(count),
         };
 
         AstPass {
@@ -438,6 +472,29 @@ where
         } = &mut self.internals
         {
             Some((collector, metadata_lookup))
+        } else {
+            None
+        }
+    }
+
+    fn debug_binds(&mut self) -> Option<(&mut Vec<Box<dyn fmt::Debug + 'b>>, &'b DB)> {
+        if let AstPassInternals::DebugBinds(formatter) = &mut self.internals {
+            Some((formatter, self.backend))
+        } else {
+            None
+        }
+    }
+
+    fn collect_debug_binds_pass(
+        formatter: &'a mut Vec<Box<dyn fmt::Debug + 'b>>,
+        backend: &'b DB,
+    ) -> AstPass<'a, 'b, DB> {
+        AstPass::debug_binds(formatter, backend)
+    }
+
+    fn count_binds(&mut self) -> Option<(&mut usize, &'b DB)> {
+        if let AstPassInternals::CountBinds(count) = &mut self.internals {
+            Some((count, self.backend))
         } else {
             None
         }

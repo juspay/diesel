@@ -22,6 +22,7 @@ struct UserTuple(#[column_name = "name"] String);
 #[diesel(table_name = users)]
 struct UserStruct2 {
     #[column_name]
+    //~^ ERROR: unexpected end of input, expected `=`
     id: i32,
 }
 
@@ -29,6 +30,7 @@ struct UserStruct2 {
 #[diesel(table_name = users)]
 struct UserStruct3 {
     #[column_name()]
+    //~^ ERROR: expected `=`
     id: i32,
 }
 
@@ -36,6 +38,7 @@ struct UserStruct3 {
 #[diesel(table_name = users)]
 struct UserStruct4 {
     #[column_name = 1]
+    //~^ ERROR: expected string literal
     id: i32,
 }
 
@@ -43,6 +46,7 @@ struct UserStruct4 {
 #[diesel(table_name = users)]
 struct UserStruct5 {
     #[column_name = "1"]
+    //~^ ERROR: expected string literal
     id: i32,
 }
 

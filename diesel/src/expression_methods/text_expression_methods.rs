@@ -1,8 +1,9 @@
 use self::private::TextOrNullableText;
 use crate::dsl;
 use crate::expression::grouped::Grouped;
-use crate::expression::operators::{Concat, Like, NotLike};
+use crate::expression::operators::{Collate, Concat, Like, NotLike};
 use crate::expression::{AsExpression, Expression};
+
 use crate::sql_types::SqlType;
 
 /// Methods present on text expressions
@@ -22,6 +23,11 @@ pub trait TextExpressionMethods: Expression + Sized {
     /// #     }
     /// # }
     /// #
+    /// # // Reading the query result requires reading memory allocated by the
+    /// # // native sqlite library, which miri cannot track provenance for.
+    /// # #[cfg(miri)]
+    /// # fn main() {}
+    /// # #[cfg(not(miri))]
     /// # fn main() {
     /// #     use self::users::dsl::*;
     /// #     use diesel::insert_into;
@@ -50,10 +56,7 @@ pub trait TextExpressionMethods: Expression + Sized {
     ///
     /// // If the value is nullable, the output will be nullable
     /// let names = users.select(hair_color.concat("ish")).load(connection);
-    /// let expected_names = vec![
-    ///     Some("Greenish".to_string()),
-    ///     None,
-    /// ];
+    /// let expected_names = vec![Some("Greenish".to_string()), None];
     /// assert_eq!(Ok(expected_names), names);
     /// # }
     /// ```
@@ -63,6 +66,50 @@ pub trait TextExpressionMethods: Expression + Sized {
         T: AsExpression<Self::SqlType>,
     {
         Grouped(Concat::new(self, other.as_expression()))
+    }
+
+    /// Returns a SQL `COLLATE` expression.
+    ///
+    /// This method can be used to control the collation of a column or expression.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// # include!("../doctest_setup.rs");
+    /// #
+    /// # // Reading the query result requires reading memory allocated by the
+    /// # // native sqlite library, which miri cannot track provenance for.
+    /// # #[cfg(miri)]
+    /// # fn main() {}
+    /// # #[cfg(not(miri))]
+    /// # fn main() {
+    /// #     run_test().unwrap();
+    /// # }
+    /// #
+    /// # fn run_test() -> QueryResult<()> {
+    /// #     use schema::users::dsl::*;
+    /// #     let connection = &mut establish_connection();
+    /// #     #[cfg(not(feature = "sqlite"))]
+    /// #     return Ok(());
+    /// #
+    /// #     #[cfg(feature = "sqlite")]
+    /// #     {
+    ///     use diesel::collation::NoCase;
+    ///
+    ///     let names = users
+    ///         .select(name)
+    ///         .filter(name.collate(NoCase).eq("sean"))
+    ///         .load::<String>(connection)?;
+    ///     assert_eq!(vec!["Sean"], names);
+    /// #     }
+    /// #     Ok(())
+    /// # }
+    /// ```
+    fn collate<C>(self, collation: C) -> dsl::Collate<Self, C>
+    where
+        C: crate::collation::Collation,
+    {
+        Grouped(Collate::new(self, collation))
     }
 
     /// Returns a SQL `LIKE` expression
@@ -77,6 +124,11 @@ pub trait TextExpressionMethods: Expression + Sized {
     /// ```rust
     /// # include!("../doctest_setup.rs");
     /// #
+    /// # // Reading the query result requires reading memory allocated by the
+    /// # // native sqlite library, which miri cannot track provenance for.
+    /// # #[cfg(miri)]
+    /// # fn main() {}
+    /// # #[cfg(not(miri))]
     /// # fn main() {
     /// #     run_test().unwrap();
     /// # }
@@ -113,6 +165,11 @@ pub trait TextExpressionMethods: Expression + Sized {
     /// ```rust
     /// # include!("../doctest_setup.rs");
     /// #
+    /// # // Reading the query result requires reading memory allocated by the
+    /// # // native sqlite library, which miri cannot track provenance for.
+    /// # #[cfg(miri)]
+    /// # fn main() {}
+    /// # #[cfg(not(miri))]
     /// # fn main() {
     /// #     run_test().unwrap();
     /// # }

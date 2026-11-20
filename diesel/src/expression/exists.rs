@@ -1,7 +1,7 @@
 //! This module contains the query dsl node definition
 //! for `EXISTS` expressions
 
-use crate::backend::{sql_dialect, Backend, SqlDialect};
+use crate::backend::{Backend, SqlDialect, sql_dialect};
 use crate::expression::subselect::Subselect;
 use crate::expression::{AppearsOnTable, Expression, SelectableExpression, ValidGrouping};
 use crate::helper_types;
@@ -24,10 +24,8 @@ use crate::sql_types::Bool;
 /// #     use diesel::select;
 /// #     use diesel::dsl::exists;
 /// #     let connection = &mut establish_connection();
-/// let sean_exists = select(exists(users.filter(name.eq("Sean"))))
-///     .get_result(connection);
-/// let jim_exists = select(exists(users.filter(name.eq("Jim"))))
-///     .get_result(connection);
+/// let sean_exists = select(exists(users.filter(name.eq("Sean")))).get_result(connection);
+/// let jim_exists = select(exists(users.filter(name.eq("Jim")))).get_result(connection);
 /// assert_eq!(Ok(true), sean_exists);
 /// assert_eq!(Ok(false), jim_exists);
 /// # }

@@ -1,22 +1,33 @@
-error[E0277]: the trait bound `Tablesample<users::table, pg::query_builder::tablesample::SystemMethod>: LoadQuery<'_, diesel::MysqlConnection, (i32, std::string::String)>` is not satisfied
-  --> tests/fail/pg_specific_tablesample_cannot_be_used_on_mysql.rs:20:32
-   |
-20 |         .load::<(i32, String)>(&mut connection);
-   |          ----                  ^^^^^^^^^^^^^^^ the trait `QueryFragment<Mysql>` is not implemented for `Tablesample<users::table, pg::query_builder::tablesample::SystemMethod>`, which is required by `Tablesample<users::table, pg::query_builder::tablesample::SystemMethod>: LoadQuery<'_, _, (i32, std::string::String)>`
-   |          |
-   |          required by a bound introduced by this call
-   |
-   = help: the trait `QueryFragment<Pg>` is implemented for `Tablesample<users::table, pg::query_builder::tablesample::SystemMethod>`
-   = help: for that trait implementation, expected `Pg`, found `Mysql`
-   = note: required for `FromClause<Tablesample<users::table, pg::query_builder::tablesample::SystemMethod>>` to implement `QueryFragment<Mysql>`
-   = note: 2 redundant requirements hidden
-   = note: required for `SelectStatement<FromClause<Tablesample<users::table, pg::query_builder::tablesample::SystemMethod>>>` to implement `QueryFragment<Mysql>`
-   = note: required for `Tablesample<users::table, pg::query_builder::tablesample::SystemMethod>` to implement `LoadQuery<'_, diesel::MysqlConnection, (i32, std::string::String)>`
-note: required by a bound in `diesel::RunQueryDsl::load`
-  --> $DIESEL/src/query_dsl/mod.rs
-   |
-   |     fn load<'query, U>(self, conn: &mut Conn) -> QueryResult<Vec<U>>
-   |        ---- required by a bound in this associated function
-   |     where
-   |         Self: LoadQuery<'query, Conn, U>,
-   |               ^^^^^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `RunQueryDsl::load`
+error[E0277]: the trait bound `Tablesample<table, _>: LoadQuery<'_, _, _>` is not satisfied
+    --> tests/fail/pg_specific_tablesample_cannot_be_used_on_mysql.rs:20:32
+     |
+  LL |         .load::<(i32, String)>(&mut connection);
+     |          ----                  ^^^^^^^^^^^^^^^ the trait `QueryFragment<Mysql>` is not implemented for `Tablesample<table, SystemMethod>`
+     |          |
+     |          required by a bound introduced by this call
+     |
+help: the trait `QueryFragment<Mysql, NotSpecialized>` is not implemented for `Tablesample<table, SystemMethod>`
+      but trait `QueryFragment<Pg, NotSpecialized>` is implemented for it
+    --> ROOT/diesel/src/pg/query_builder/tablesample.rs
+     |
+ LL | / impl<S, TSM> QueryFragment<Pg> for Tablesample<S, TSM>
+ LL | | where
+ LL | |     S: QueryFragment<Pg>,
+ LL | |     TSM: TablesampleMethod,
+     | |___________________________^
+     = help: for that trait implementation, expected `Pg`, found `Mysql`
+     = note: required for `FromClause<Tablesample<table, SystemMethod>>` to implement `QueryFragment<Mysql>`
+     = note: 2 redundant requirements hidden
+     = note: required for `SelectStatement<FromClause<Tablesample<table, _>>>` to implement `QueryFragment<Mysql>`
+     = note: required for `Tablesample<table, SystemMethod>` to implement `LoadQuery<'_, MysqlLikeConnection<Mysql>, _>`
+note: required by a bound in `load`
+    --> ROOT/diesel/src/query_dsl/mod.rs
+     |
+LL | pub trait RunQueryDsl<Conn>: Sized {
+...
+LL |     fn load<'query, U>(self, conn: &mut Conn) -> QueryResult<Vec<U>>
+LL |     where
+LL |         Self: LoadQuery<'query, Conn, U>,
+     |               ^^^^^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `RunQueryDsl::load`
+  
+     For more information about this error, try `rustc --explain E0277`.

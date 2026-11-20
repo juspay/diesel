@@ -21,10 +21,21 @@ pub(crate) struct TestArgs {
     /// while running tests for all backends
     #[clap(long = "keep-going")]
     keep_going: bool,
-    /// additional flags passed to cargo nextest while running
-    /// unit/integration tests.
+    // run wasm tests, currently only supports sqlite
+    #[clap(long = "wasm")]
+    wasm: bool,
+    /// run the miri-compatible subset of the test suite under miri, linking
+    /// the sqlite backend against the system libsqlite3 via miri's
+    /// `-Zmiri-native-lib` flag. This runs the unit tests, doc tests and
+    /// integration tests of the compatible subset. Currently only supports
+    /// sqlite.
+    #[clap(long = "miri")]
+    miri: bool,
+    /// additional flags passed to the cargo nextest/test invocations while
+    /// running the unit/integration tests and the doc tests.
     ///
-    /// This is useful for passing custom test filters/arguments
+    /// This is useful for passing additional features or custom test
+    /// filters/arguments
     ///
     /// See <https://nexte.st/docs/running/> for details
     flags: Vec<String>,
@@ -52,10 +63,127 @@ impl TestArgs {
         }
     }
 
+    /// Runs the miri-compatible subset of the sqlite test suite.
+    ///
+    /// Miri does not interpret the native libsqlite3, so we load it via
+    /// `-Zmiri-native-lib`. Tests that require native -> rust callbacks
+    /// (hooks, custom sql functions, …), that read memory allocated by the
+    /// native library, or that otherwise use unsupported operations are
+    /// compiled out via `#[cfg(not(miri))]` and are therefore not part of
+    /// the run.
+    ///
+    /// This respects `--no-doc-tests` / `--no-integration-tests` like the
+    /// non-miri run: the lib tests of the `diesel` crate and the integration
+    /// tests of `diesel_tests` are both classified as integration tests and
+    /// are run via nextest, which starts a separate miri context for every
+    /// test and therefore can run them in parallel (see
+    /// <https://nexte.st/docs/integrations/miri/>), while the doc tests of
+    /// the `diesel` crate are run via `cargo miri test --doc` as nextest does
+    /// not support doc tests.
+    fn run_miri_tests(&self, metadata: &Metadata) -> bool {
+        let native_lib = match std::env::var("MIRI_NATIVE_LIB") {
+            Ok(path) => path,
+            Err(_) => match Command::new("pkg-config")
+                .args(["--variable=libdir", "sqlite3"])
+                .output()
+            {
+                Ok(output) if output.status.success() => {
+                    let libdir = String::from_utf8_lossy(&output.stdout).trim().to_string();
+                    format!("{libdir}/libsqlite3.so")
+                }
+                _ => {
+                    eprintln!(
+                        "Failed to locate libsqlite3. Install pkg-config + libsqlite3-dev \
+                         or set `MIRI_NATIVE_LIB` to the path of the sqlite library"
+                    );
+                    return false;
+                }
+            },
+        };
+        if !std::path::Path::new(&native_lib).exists() {
+            eprintln!(
+                "The sqlite library `{native_lib}` does not exist. \
+                 Set `MIRI_NATIVE_LIB` to the path of the sqlite library"
+            );
+            return false;
+        }
+
+        // All of these test suites use in-memory sqlite databases,
+        // so no migration setup is required here.
+        // Additional flags are passed to the test commands as is, so they
+        // can be used to enable additional features or to filter the tests
+        // to run.
+        let mut success = true;
+
+        if !self.no_integration_tests {
+            // The unit tests of the `diesel` crate and the integration tests
+            // of `diesel_tests` are both classified as integration tests, so
+            // they share the same code path here as in the non-miri test run.
+            let mut command = Command::new("cargo");
+            command
+                .args(["+nightly", "miri", "nextest", "run"])
+                .args(["-p", "juspay_diesel", "-p", "diesel_tests"])
+                .args(["--no-default-features", "-F", "sqlite"])
+                .current_dir(&metadata.workspace_root)
+                .env("MIRIFLAGS", format!("-Zmiri-native-lib={native_lib}"))
+                .args(&self.flags);
+            println!("Running miri integration tests via `{command:?}`: ");
+            let status = command
+                .stdout(Stdio::inherit())
+                .stderr(Stdio::inherit())
+                .status()
+                .unwrap();
+            if !status.success() {
+                eprintln!("Failed to run miri integration tests");
+                success = false;
+            }
+        } else {
+            println!("Integration tests skipped because `--no-integration-tests` was passed");
+        }
+
+        if !self.no_doc_tests {
+            // nextest does not support doc tests, so those are still run via
+            // `cargo miri test --doc`. Features that are only required to run
+            // the same set of doc tests as the non-miri test run are expected
+            // to be passed by the caller via `flags`.
+            let mut command = Command::new("cargo");
+            command
+                .args(["+nightly", "miri", "test", "--doc"])
+                .args(["--no-default-features", "-p", "juspay_diesel"])
+                .args(["-F", "sqlite"])
+                .current_dir(&metadata.workspace_root)
+                .env("MIRIFLAGS", format!("-Zmiri-native-lib={native_lib}"))
+                .args(&self.flags);
+            println!("Running miri doc tests via `{command:?}`: ");
+            let status = command
+                .stdout(Stdio::inherit())
+                .stderr(Stdio::inherit())
+                .status()
+                .unwrap();
+            if !status.success() {
+                eprintln!("Failed to run miri doc tests");
+                success = false;
+            }
+        } else {
+            println!("Doc tests skipped because `--no-doc-tests` was passed");
+        }
+
+        success
+    }
+
     fn run_tests(&self, metadata: &Metadata) -> bool {
         let backend_name = self.backend.to_string();
         println!("Running tests for {backend_name}");
-        let exclude = crate::utils::get_exclude_for_backend(&backend_name, metadata);
+        if self.miri && !matches!(self.backend, Backend::Sqlite) {
+            eprintln!(
+                "Only the sqlite backend supports miri for now, skipping the current backend ({backend_name})"
+            );
+            return true;
+        }
+        if self.miri {
+            return self.run_miri_tests(metadata);
+        }
+        let exclude = crate::utils::get_exclude_for_backend(&backend_name, metadata, self.wasm);
         if std::env::var("DATABASE_URL").is_err() {
             match self.backend {
                 Backend::Postgres => {
@@ -76,53 +204,84 @@ impl TestArgs {
                     if std::env::var("MYSQL_DATABASE_URL").is_err()
                         || std::env::var("MYSQL_UNIT_TEST_DATABASE_URL").is_err()
                     {
-                        println!("Remember to set `MYSQL_DATABASE_URL` and `MYSQL_UNIT_TEST_DATABASE_URL` for running the mysql tests");
+                        println!(
+                            "Remember to set `MYSQL_DATABASE_URL` and `MYSQL_UNIT_TEST_DATABASE_URL` for running the mysql tests"
+                        );
+                    }
+                }
+                Backend::Mariadb => {
+                    if std::env::var("MARIADB_DATABASE_URL").is_err()
+                        || std::env::var("MARIADB_UNIT_TEST_DATABASE_URL").is_err()
+                    {
+                        println!(
+                            "Remember to set `MARIADB_DATABASE_URL` and `MARIADB_UNIT_TEST_DATABASE_URL` for running the mariadb tests"
+                        );
                     }
                 }
                 Backend::All => unreachable!(),
             }
         }
         let backend = &self.backend;
+        if matches!(backend, Backend::Postgres | Backend::Mysql | Backend::Mariadb | Backend::All if self.wasm)
+        {
+            eprintln!(
+                "Only the sqlite backend supports wasm for now, the current backend is {backend}"
+            );
+            return true;
+        }
         let url = match backend {
             Backend::Postgres => std::env::var("PG_DATABASE_URL"),
             Backend::Sqlite => std::env::var("SQLITE_DATABASE_URL"),
             Backend::Mysql => std::env::var("MYSQL_DATABASE_URL"),
+            Backend::Mariadb => std::env::var("MARIADB_DATABASE_URL"),
             Backend::All => unreachable!(),
         };
         let url = url
             .or_else(|_| std::env::var("DATABASE_URL"))
             .expect("DATABASE_URL is set for tests");
 
-        // run the migrations
-        let mut command = Command::new("cargo");
-        command
-            .args(["run", "-p", "diesel_cli", "--no-default-features", "-F"])
-            .arg(backend.to_string())
-            .args(["--", "migration", "run", "--migration-dir"])
-            .arg(
-                metadata
-                    .workspace_root
-                    .join("migrations")
-                    .join(backend.to_string()),
-            )
-            .arg("--database-url")
-            .arg(&url);
-        println!("Run database migration via `{command:?}`");
-        let status = command
-            .stdout(Stdio::inherit())
-            .stderr(Stdio::inherit())
-            .status()
-            .unwrap();
-        if !status.success() {
-            eprintln!("Failed to run migrations");
-            return false;
+        if !self.wasm {
+            // run the migrations
+            let mut command = Command::new("cargo");
+            command
+                .args(["run", "-p", "diesel_cli", "--no-default-features", "-F"])
+                .arg(backend.to_string())
+                .args(["--", "migration", "run", "--migration-dir"])
+                .arg(
+                    metadata
+                        .workspace_root
+                        .join("migrations")
+                        .join(backend.to_string()),
+                )
+                .arg("--database-url")
+                .arg(&url);
+            println!("Run database migration via `{command:?}`");
+            let status = command
+                .stdout(Stdio::inherit())
+                .stderr(Stdio::inherit())
+                .status()
+                .unwrap();
+            if !status.success() {
+                eprintln!("Failed to run migrations");
+                return false;
+            }
         }
 
         if !self.no_integration_tests {
             // run the normal tests via nextest
             let mut command = Command::new("cargo");
+            // wasm tests are slow with cargo nextest
+            // as this spawns a new node.js runtime for each test
+            // which then needs to translate the wasm to bytecode which takes a bit time.
+            // ordinary cargo test only spawns one node.js instance and therefore needs
+            // to translate the wasm only once
+            if self.wasm {
+                command.args(["test", "--tests", "--benches", "--examples"]);
+            } else {
+                command.args(["nextest", "run"]);
+            }
             command
-                .args(["nextest", "run", "--workspace", "--no-default-features"])
+                .args(["--workspace", "--no-default-features"])
                 .current_dir(&metadata.workspace_root)
                 .args(exclude)
                 .arg("-F")
@@ -131,8 +290,6 @@ impl TestArgs {
                 .arg("-F")
                 .arg(format!("diesel_derives/{backend}"))
                 .arg("-F")
-                .arg(format!("diesel_cli/{backend}"))
-                .arg("-F")
                 .arg(format!("migrations_macros/{backend}"))
                 .arg("-F")
                 .arg(format!("diesel_migrations/{backend}"))
@@ -140,11 +297,31 @@ impl TestArgs {
                 .arg(format!("diesel_tests/{backend}"))
                 .arg("-F")
                 .arg(format!("diesel-dynamic-schema/{backend}"))
-                .args(&self.flags);
+                .arg("-F")
+                .arg(format!("diesel_migrations/{backend}"));
+            if !self.wasm {
+                command
+                    .arg("-F")
+                    .arg(format!("diesel-async/{backend}"))
+                    .args(&self.flags);
+            }
 
-            if matches!(self.backend, Backend::Mysql) {
+            if matches!(self.backend, Backend::Mysql | Backend::Mariadb) {
                 // cannot run mysql tests in parallel
-                command.args(["-j", "1"]);
+                command.args(["--profile", "mysql"]);
+            }
+            if self.wasm {
+                command
+                    .env("WASM_BINDGEN_TEST_TIMEOUT", "120")
+                    .env(
+                        "CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUNNER",
+                        "wasm-bindgen-test-runner",
+                    )
+                    .env("RUSTFLAGS", "--cfg getrandom_backend=\"wasm_js\"")
+                    .arg("--target")
+                    .arg("wasm32-unknown-unknown");
+            } else {
+                command.arg("-F").arg(format!("diesel_cli/{backend}"));
             }
             println!("Running tests via `{command:?}`: ");
 
@@ -170,7 +347,7 @@ impl TestArgs {
                     "--doc",
                     "--no-default-features",
                     "-p",
-                    "diesel",
+                    "juspay_diesel",
                     "-p",
                     "diesel_derives",
                     "-p",
@@ -181,6 +358,10 @@ impl TestArgs {
                     "dsl_auto_type",
                     "-p",
                     "diesel_table_macro_syntax",
+                    "-p",
+                    "sqlstate",
+                    "-p",
+                    "migrations_macros",
                     "-F",
                     "diesel/extras",
                 ])
@@ -189,10 +370,30 @@ impl TestArgs {
                 .arg("-F")
                 .arg(format!("diesel_derives/{backend}"))
                 .arg("-F")
-                .arg(format!("diesel-dynamic-schema/{backend}"));
-            if matches!(backend, Backend::Mysql) {
+                .arg(format!("diesel-dynamic-schema/{backend}"))
+                .arg("-F")
+                .arg(format!("diesel_migrations/{backend}"))
+                .arg("-F")
+                .arg(format!("migrations_macros/{backend}"));
+            if !self.wasm {
+                command
+                    .args(["-p", "diesel-async", "-F"])
+                    .arg(format!("diesel-async/{backend}"));
+            };
+            if matches!(backend, Backend::Mysql | Backend::Mariadb) {
                 // cannot run mysql tests in parallel
                 command.args(["-j", "1"]);
+            }
+            if self.wasm {
+                command
+                    .env("WASM_BINDGEN_TEST_TIMEOUT", "120")
+                    .env(
+                        "CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUNNER",
+                        "wasm-bindgen-test-runner",
+                    )
+                    .env("RUSTFLAGS", "--cfg getrandom_backend=\"wasm_js\"")
+                    .arg("--target")
+                    .arg("wasm32-unknown-unknown");
             }
             println!("Running tests via `{command:?}`: ");
             let status = command
@@ -231,7 +432,7 @@ impl TestArgs {
                             .as_ref()
                             .unwrap()
                             .path()
-                            .join(&p.name)
+                            .join(&*p.name)
                             .display()
                             .to_string()
                     } else {

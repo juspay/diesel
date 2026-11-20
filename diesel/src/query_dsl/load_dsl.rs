@@ -1,4 +1,4 @@
-use self::private::LoadIter;
+pub(crate) use self::private::LoadIter;
 use super::RunQueryDsl;
 use crate::backend::Backend;
 use crate::connection::{Connection, DefaultLoadingMode, LoadConnection};
@@ -60,6 +60,11 @@ where
         Conn: 'conn;
 
     fn internal_load(self, conn: &mut Conn) -> QueryResult<Self::RowIter<'_>> {
+        const {
+            // that's required to force evaluating
+            // this constant
+            let _ = T::Query::IS_WINDOW_FUNCTION;
+        }
         Ok(LoadIter {
             cursor: conn.load(self.as_query())?,
             _marker: Default::default(),
@@ -101,7 +106,7 @@ where
 // * LoadIter as it's an implementation detail
 mod private {
     use crate::backend::Backend;
-    use crate::deserialize::FromSqlRow;
+    use crate::deserialize::{FromSqlRow, SqlTypeLikeMarker};
     use crate::expression::select_by::SelectBy;
     use crate::expression::{Expression, TypedExpressionType};
     use crate::sql_types::{SqlType, Untyped};
@@ -110,7 +115,7 @@ mod private {
     #[allow(missing_debug_implementations)]
     pub struct LoadIter<U, C, ST, DB> {
         pub(super) cursor: C,
-        pub(super) _marker: std::marker::PhantomData<(ST, U, DB)>,
+        pub(super) _marker: core::marker::PhantomData<(ST, U, DB)>,
     }
 
     impl<'a, C, U, ST, DB, R> LoadIter<U, C, ST, DB>
@@ -179,13 +184,13 @@ mod private {
     }
 
     #[cfg_attr(
-        docsrs,
+        diesel_docsrs,
         doc(cfg(feature = "i-implement-a-third-party-backend-and-opt-into-breaking-changes"))
     )]
     #[diagnostic::on_unimplemented(
         note = "this is a mismatch between what your query returns and what your type expects the query to return",
         note = "the fields in your struct need to match the fields returned by your query in count, order and type",
-        note = "consider using `#[derive(Selectable)]` or #[derive(QueryableByName)] + `#[diesel(check_for_backend({DB}))]` \n\
+        note = "consider using `#[diesel(check_for_backend({DB}))]` on either `#[derive(Selectable)]` or `#[derive(QueryableByName)]` \n\
                 on your struct `{U}` and in your query `.select({U}::as_select())` to get a better error message"
     )]
     pub trait CompatibleType<U, DB> {
@@ -212,11 +217,11 @@ mod private {
     impl<U, DB, E, ST> CompatibleType<U, DB> for SelectBy<U, DB>
     where
         DB: Backend,
-        ST: SqlType + TypedExpressionType,
+        ST: TypedExpressionType + SqlTypeLikeMarker,
         U: Selectable<DB, SelectExpression = E>,
         E: Expression<SqlType = ST>,
-        U: FromSqlRow<ST, DB>,
+        U: FromSqlRow<<ST as SqlTypeLikeMarker>::SqlType, DB>,
     {
-        type SqlType = ST;
+        type SqlType = <ST as SqlTypeLikeMarker>::SqlType;
     }
 }

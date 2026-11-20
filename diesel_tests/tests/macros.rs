@@ -7,9 +7,14 @@ use crate::schema::*;
 use diesel::sql_types::{BigInt, VarChar};
 use diesel::*;
 
-define_sql_function!(fn my_lower(x: VarChar) -> VarChar);
+#[declare_sql_function]
+extern "SQL" {
+    fn my_lower(x: VarChar) -> VarChar;
+    fn setval(x: VarChar, y: BigInt);
+    fn currval(x: VarChar) -> BigInt;
+}
 
-#[test]
+#[diesel_test_helper::test]
 fn test_sql_function() {
     use crate::schema::users::dsl::*;
 
@@ -40,10 +45,7 @@ fn test_sql_function() {
     );
 }
 
-define_sql_function!(fn setval(x: VarChar, y: BigInt));
-define_sql_function!(fn currval(x: VarChar) -> BigInt);
-
-#[test]
+#[diesel_test_helper::test]
 fn sql_function_without_return_type() {
     let connection = &mut connection();
     select(setval("users_id_seq", 54))
@@ -52,4 +54,64 @@ fn sql_function_without_return_type() {
 
     let seq_val = select(currval("users_id_seq")).get_result::<i64>(connection);
     assert_eq!(Ok(54), seq_val);
+}
+
+#[cfg(feature = "postgres")]
+mod named_params_block_pg {
+    use diesel::pg::Pg;
+    use diesel::sql_types::{BigInt, VarChar};
+    use diesel::*;
+
+    #[declare_sql_function(named_parameters = true)]
+    extern "SQL" {
+        fn has_named_parameters(a: BigInt, b: VarChar);
+        #[named_parameters = false]
+        fn has_positional_parameters(a: BigInt, b: VarChar);
+    }
+
+    #[diesel_test_helper::test]
+    fn has_named_parameters_sql() {
+        assert_eq!(
+            r#"has_named_parameters(a=>$1, b=>$2) -- binds: [10, "text"]"#,
+            debug_query::<Pg, _>(&has_named_parameters(10, "text")).to_string()
+        );
+    }
+
+    #[diesel_test_helper::test]
+    fn has_positional_parameters_sql() {
+        assert_eq!(
+            r#"has_positional_parameters($1, $2) -- binds: [10, "text"]"#,
+            debug_query::<Pg, _>(&has_positional_parameters(10, "text")).to_string()
+        );
+    }
+}
+
+#[cfg(feature = "postgres")]
+mod positional_params_block_pg {
+    use diesel::pg::Pg;
+    use diesel::sql_types::{BigInt, VarChar};
+    use diesel::*;
+
+    #[declare_sql_function]
+    extern "SQL" {
+        #[named_parameters = true]
+        fn has_named_parameters(a: BigInt, b: VarChar);
+        fn has_positional_parameters(a: BigInt, b: VarChar);
+    }
+
+    #[diesel_test_helper::test]
+    fn has_named_parameters_sql() {
+        assert_eq!(
+            r#"has_named_parameters(a=>$1, b=>$2) -- binds: [10, "text"]"#,
+            debug_query::<Pg, _>(&has_named_parameters(10, "text")).to_string()
+        );
+    }
+
+    #[diesel_test_helper::test]
+    fn has_positional_parameters_sql() {
+        assert_eq!(
+            r#"has_positional_parameters($1, $2) -- binds: [10, "text"]"#,
+            debug_query::<Pg, _>(&has_positional_parameters(10, "text")).to_string()
+        );
+    }
 }

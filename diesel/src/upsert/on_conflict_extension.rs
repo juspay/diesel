@@ -1,4 +1,5 @@
 use crate::expression::Expression;
+use crate::query_builder::update_statement::SetAutoTypeHelper;
 use crate::query_builder::upsert::into_conflict_clause::IntoConflictValueClause;
 use crate::query_builder::upsert::on_conflict_actions::*;
 use crate::query_builder::upsert::on_conflict_clause::*;
@@ -11,7 +12,7 @@ use crate::query_dsl::methods::OrFilterDsl;
 use crate::query_source::QuerySource;
 use crate::sql_types::BoolOrNullableBool;
 
-impl<T, U, Op, Ret> InsertStatement<T, U, Op, Ret>
+impl<T, U, Op, Ret, S> InsertStatement<T, U, Op, Ret, S>
 where
     T: QuerySource,
     U: UndecoratedInsertRecord<T> + IntoConflictValueClause,
@@ -32,11 +33,14 @@ where
     /// # fn run_test() -> QueryResult<()> {
     /// #     use self::users::dsl::*;
     /// #     let conn = &mut establish_connection();
-    /// #     #[cfg(feature = "postgres")]
+    /// #     #[cfg(any(feature = "postgres", feature = "mariadb"))]
     /// #     diesel::sql_query("TRUNCATE TABLE users").execute(conn).unwrap();
-    /// #     #[cfg(any(feature = "sqlite", feature = "mysql"))]
+    /// #     #[cfg(any(feature = "__sqlite-shared", feature = "mysql"))]
     /// #     diesel::sql_query("DELETE FROM users").execute(conn).unwrap();
-    /// let user = User { id: 1, name: "Sean" };
+    /// let user = User {
+    ///     id: 1,
+    ///     name: "Sean",
+    /// };
     ///
     /// let user_count = users.count().get_result::<i64>(conn)?;
     /// assert_eq!(user_count, 0);
@@ -70,29 +74,29 @@ where
     /// # fn run_test() -> diesel::QueryResult<()> {
     /// #     use self::users::dsl::*;
     /// #     let conn = &mut establish_connection();
-    /// #     #[cfg(feature = "postgres")]
+    /// #     #[cfg(any(feature = "postgres", feature = "mariadb"))]
     /// #     diesel::sql_query("TRUNCATE TABLE users").execute(conn).unwrap();
-    /// #     #[cfg(any(feature = "mysql", feature = "sqlite"))]
+    /// #     #[cfg(any(feature = "mysql", feature = "__sqlite-shared"))]
     /// #     diesel::sql_query("DELETE FROM users").execute(conn).unwrap();
-    /// # #[cfg(any(feature = "postgres", feature = "mysql"))]
-    /// let user = User { id: 1, name: "Sean" };
+    /// # #[cfg(any(feature = "postgres", feature = "mysql", feature = "mariadb"))]
+    /// let user = User {
+    ///     id: 1,
+    ///     name: "Sean",
+    /// };
     ///
-    /// # #[cfg(any(feature = "postgres", feature = "mysql"))]
+    /// # #[cfg(any(feature = "postgres", feature = "mysql", feature = "mariadb"))]
     /// let inserted_row_count = diesel::insert_into(users)
     ///     .values(&vec![user, user])
     ///     .on_conflict_do_nothing()
     ///     .execute(conn)?;
-    /// # #[cfg(any(feature = "postgres", feature = "mysql"))]
+    /// # #[cfg(any(feature = "postgres", feature = "mysql", feature = "mariadb"))]
     /// let user_count = users.count().get_result::<i64>(conn)?;
-    /// # #[cfg(any(feature = "postgres", feature = "mysql"))]
+    /// # #[cfg(any(feature = "postgres", feature = "mysql", feature = "mariadb"))]
     /// assert_eq!(user_count, 1);
     /// # Ok(())
     /// # }
     /// ```
-    pub fn on_conflict_do_nothing(
-        self,
-    ) -> InsertStatement<T, OnConflictValues<U::ValueClause, NoConflictTarget, DoNothing<T>>, Op, Ret>
-    {
+    pub fn on_conflict_do_nothing(self) -> crate::dsl::OnConflictDoNothing<Self> {
         self.replace_values(|values| OnConflictValues::do_nothing(values.into_value_clause()))
     }
 
@@ -129,18 +133,23 @@ where
     /// #     name: &'a str,
     /// # }
     /// #
+    /// # // Reading the query result requires reading memory allocated by the
+    /// # // native sqlite library, which miri cannot track provenance for.
+    /// # #[cfg(miri)]
+    /// # fn main() {}
+    /// # #[cfg(not(miri))]
     /// # fn main() {
     /// #    run_test().unwrap()
     /// # }
-    /// # #[cfg(any(feature = "postgres", feature = "sqlite"))]
+    /// # #[cfg(any(feature = "postgres", feature = "__sqlite-shared"))]
     /// # fn run_test() -> diesel::QueryResult<()> {
     /// #     use self::users::dsl::*;
     /// use diesel::upsert::*;
     ///
     /// #     let conn = &mut establish_connection();
-    /// #     #[cfg(any(feature = "sqlite", feature = "postgres"))]
+    /// #     #[cfg(any(feature = "__sqlite-shared", feature = "postgres"))]
     /// #     diesel::sql_query("DROP TABLE users").execute(conn).unwrap();
-    /// #     #[cfg(any(feature = "sqlite", feature = "postgres"))]
+    /// #     #[cfg(any(feature = "__sqlite-shared", feature = "postgres"))]
     /// #     diesel::sql_query("CREATE TABLE users (id SERIAL PRIMARY KEY, name TEXT)").execute(conn).unwrap();
     /// diesel::sql_query("CREATE UNIQUE INDEX users_name ON users (name)").execute(conn).unwrap();
     /// let user = User { id: 1, name: "Sean" };
@@ -165,7 +174,7 @@ where
     /// assert!(idx_conflict_result.is_err());
     /// # Ok(())
     /// # }
-    /// #[cfg(feature = "mysql")]
+    /// #[cfg(any(feature = "mysql", feature = "mariadb"))]
     /// fn run_test() -> diesel::QueryResult<()> { Ok(()) }
     /// ```
     ///
@@ -192,7 +201,7 @@ where
     /// #     hair_color: &'a str,
     /// # }
     /// #
-    /// # #[cfg(any(feature = "sqlite", feature = "postgres"))]
+    /// # #[cfg(any(feature = "__sqlite-shared", feature = "postgres"))]
     /// # fn main() {
     /// #     use self::users::dsl::*;
     /// use diesel::upsert::*;
@@ -222,7 +231,7 @@ where
     /// assert_eq!(Ok(0), inserted_row_count);
     /// # }
     ///
-    /// #[cfg(feature = "mysql")]
+    /// #[cfg(any(feature = "mysql", feature = "mariadb"))]
     /// fn main() {}
     /// ```
     ///
@@ -251,7 +260,7 @@ where
     /// # fn main() {
     /// #    run_test().unwrap()
     /// # }
-    /// # #[cfg(feature = "mysql")]
+    /// # #[cfg(any(feature = "mysql", feature = "mariadb"))]
     /// # fn run_test() -> diesel::QueryResult<()> {
     /// #     use self::users::dsl::*;
     /// use diesel::upsert::*;
@@ -289,25 +298,23 @@ where
     /// assert_eq!(user_names, vec![String::from("Sean")]);
     /// # Ok(())
     /// # }
-    /// #[cfg(not(feature = "mysql"))]
+    /// #[cfg(not(any(feature = "mysql", feature = "mariadb")))]
     /// fn run_test() -> diesel::QueryResult<()> {Ok(())}
     /// ```
     ///
-    /// See the documentation for [`on_constraint`] and [`do_update`] for
-    /// more examples.
+    /// See the documentation for [`on_constraint`], [`do_update`], and
+    /// [`filter_target`] for more examples.
     ///
     /// [`on_constraint`]: ../upsert/fn.on_constraint.html
     /// [`do_update`]: crate::upsert::IncompleteOnConflict::do_update()
-    pub fn on_conflict<Target>(
-        self,
-        target: Target,
-    ) -> IncompleteOnConflict<InsertStatement<T, U::ValueClause, Op, Ret>, ConflictTarget<Target>>
+    /// [`filter_target`]: crate::upsert::DecoratableTarget::filter_target()
+    pub fn on_conflict<Target>(self, target: Target) -> crate::dsl::OnConflict<Self, Target>
     where
         ConflictTarget<Target>: OnConflictTarget<T>,
     {
         IncompleteOnConflict {
             stmt: self.replace_values(IntoConflictValueClause::into_value_clause),
-            target: ConflictTarget(target),
+            target: ConflictTarget::new(target),
         }
     }
 }
@@ -319,6 +326,129 @@ where
     T: DecoratableTarget<P>,
 {
     type FilterOutput = IncompleteOnConflict<Stmt, <T as DecoratableTarget<P>>::FilterOutput>;
+
+    /// Adds a `WHERE` predicate to the `ON CONFLICT` target, telling PostgreSQL
+    /// which unique index to check for conflicts.
+    ///
+    /// This generates `ON CONFLICT (target) WHERE predicate DO ...` SQL.
+    /// PostgreSQL selects unique indexes whose `WHERE` clause is implied by
+    /// the predicate. The predicate does not need to exactly match the index's
+    /// `WHERE` clause; implication is sufficient.
+    ///
+    /// Calling `.filter_target()` multiple times combines the predicates with
+    /// `AND`. PostgreSQL only.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// # include!("on_conflict_docs_setup.rs");
+    /// # #[cfg(feature = "postgres")]
+    /// # fn main() -> diesel::QueryResult<()> {
+    /// #     use self::users::dsl::*;
+    /// #     let conn = &mut establish_connection();
+    ///
+    /// diesel::sql_query(
+    ///     "CREATE UNIQUE INDEX users_name_active ON users (name) WHERE id > 5",
+    /// )
+    /// .execute(conn)?;
+    ///
+    /// let user = User { id: 10, name: "Sean" };
+    /// diesel::insert_into(users).values(&user).execute(conn)?;
+    ///
+    /// // id=11 satisfies the partial index predicate, so uniqueness is violated: does nothing.
+    /// let count = diesel::insert_into(users)
+    ///     .values(User { id: 11, name: "Sean" })
+    ///     .on_conflict(name)
+    ///     .filter_target(id.gt(5))
+    ///     .do_nothing()
+    ///     .execute(conn)?;
+    /// assert_eq!(count, 0);
+    ///
+    /// // id=3 does not satisfy the partial index predicate, so it is not covered by the index:
+    /// // no uniqueness violation, inserts normally.
+    /// let count = diesel::insert_into(users)
+    ///     .values(User { id: 3, name: "Sean" })
+    ///     .on_conflict(name)
+    ///     .filter_target(id.gt(5))
+    ///     .do_nothing()
+    ///     .execute(conn)?;
+    /// assert_eq!(count, 1);
+    /// # Ok(())
+    /// # }
+    /// # #[cfg(not(feature = "postgres"))]
+    /// # fn main() {}
+    /// ```
+    ///
+    /// ## Do update
+    ///
+    /// ```rust
+    /// # include!("on_conflict_docs_setup.rs");
+    /// # #[cfg(feature = "postgres")]
+    /// # fn main() -> diesel::QueryResult<()> {
+    /// #     use self::users::dsl::*;
+    /// #     let conn = &mut establish_connection();
+    ///
+    /// diesel::sql_query(
+    ///     "CREATE UNIQUE INDEX users_name_do_update ON users (name) WHERE id > 5",
+    /// )
+    /// .execute(conn)?;
+    ///
+    /// diesel::insert_into(users)
+    ///     .values(User { id: 10, name: "Sean" })
+    ///     .execute(conn)?;
+    ///
+    /// // id=11 satisfies the partial index predicate, so uniqueness is violated: name updated.
+    /// diesel::insert_into(users)
+    ///     .values(User { id: 11, name: "Sean" })
+    ///     .on_conflict(name)
+    ///     .filter_target(id.gt(5))
+    ///     .do_update()
+    ///     .set(name.eq("Updated"))
+    ///     .execute(conn)?;
+    ///
+    /// let names = users.filter(id.gt(5)).select(name).load::<String>(conn)?;
+    /// assert_eq!(names, vec!["Updated"]);
+    /// # Ok(())
+    /// # }
+    /// # #[cfg(not(feature = "postgres"))]
+    /// # fn main() {}
+    /// ```
+    ///
+    /// ## Chaining filter_target
+    ///
+    /// Calling `.filter_target()` multiple times combines the predicates with `AND`,
+    /// which is useful when the unique index `WHERE` clause has multiple conditions.
+    ///
+    /// ```rust
+    /// # include!("on_conflict_docs_setup.rs");
+    /// # #[cfg(feature = "postgres")]
+    /// # fn main() -> diesel::QueryResult<()> {
+    /// #     use self::users::dsl::*;
+    /// #     let conn = &mut establish_connection();
+    ///
+    /// diesel::sql_query(
+    ///     "CREATE UNIQUE INDEX users_name_range ON users (name) WHERE id > 5 AND id < 100",
+    /// )
+    /// .execute(conn)?;
+    ///
+    /// diesel::insert_into(users)
+    ///     .values(User { id: 10, name: "Sean" })
+    ///     .execute(conn)?;
+    ///
+    /// // Combined predicate matches the partial index, conflict detected: do nothing.
+    /// let count = diesel::insert_into(users)
+    ///     .values(User { id: 11, name: "Sean" })
+    ///     .on_conflict(name)
+    ///     .filter_target(id.gt(5))
+    ///     .filter_target(id.lt(100))
+    ///     .do_nothing()
+    ///     .execute(conn)?;
+    /// assert_eq!(count, 0);
+    /// # Ok(())
+    /// # }
+    /// # #[cfg(not(feature = "postgres"))]
+    /// # fn main() {}
+    /// ```
     fn filter_target(self, predicate: P) -> Self::FilterOutput {
         IncompleteOnConflict {
             stmt: self.stmt,
@@ -334,8 +464,66 @@ pub struct IncompleteOnConflict<Stmt, Target> {
     target: Target,
 }
 
-impl<T: QuerySource, U, Op, Ret, Target>
-    IncompleteOnConflict<InsertStatement<T, U, Op, Ret>, Target>
+/// Helper trait for `#[auto_type]`
+///
+/// This trait allows extracting the internal types of a `IncompleteOnConflict`
+/// struct, which is needed to define the `DoNothing` and `DoUpdate` type aliases
+/// in `diesel::dsl`.
+#[allow(unreachable_pub)]
+pub trait OnConflictHelper {
+    /// The table on which the `INSERT` statement acts
+    type Table;
+    /// The `VALUES` clause of the `INSERT` statement
+    type Values;
+    /// The conflict target (e.g., column or constraint) specified in the `ON CONFLICT` clause
+    type Target;
+    /// The SQL definition of the insert operation
+    type Op;
+    /// The `RETURNING` clause of the statement
+    type Ret;
+    /// The schema name stored by the statement
+    type Schema;
+}
+
+impl<T, U, Op, Ret, S, Target> OnConflictHelper
+    for IncompleteOnConflict<InsertStatement<T, U, Op, Ret, S>, Target>
+where
+    T: QuerySource,
+{
+    type Table = T;
+    type Values = U;
+    type Target = Target;
+    type Op = Op;
+    type Ret = Ret;
+    type Schema = S;
+}
+
+impl<Stmt, Target, Changes> SetAutoTypeHelper<Changes> for IncompleteDoUpdate<Stmt, Target>
+where
+    Stmt: crate::query_builder::insert_statement::InsertAutoTypeHelper,
+    <Stmt as crate::query_builder::insert_statement::InsertAutoTypeHelper>::Table: QuerySource,
+    Changes: AsChangeset<
+        Target = <Stmt as crate::query_builder::insert_statement::InsertAutoTypeHelper>::Table,
+    >,
+{
+    type Out = InsertStatement<
+        <Stmt as crate::query_builder::insert_statement::InsertAutoTypeHelper>::Table,
+        OnConflictValues<
+            <Stmt as crate::query_builder::insert_statement::InsertAutoTypeHelper>::Values,
+            Target,
+            DoUpdate<
+                Changes::Changeset,
+                <Stmt as crate::query_builder::insert_statement::InsertAutoTypeHelper>::Table,
+            >,
+        >,
+        <Stmt as crate::query_builder::insert_statement::InsertAutoTypeHelper>::Op,
+        <Stmt as crate::query_builder::insert_statement::InsertAutoTypeHelper>::Ret,
+        <Stmt as crate::query_builder::insert_statement::InsertAutoTypeHelper>::Schema,
+    >;
+}
+
+impl<T: QuerySource, U, Op, Ret, S, Target>
+    IncompleteOnConflict<InsertStatement<T, U, Op, Ret, S>, Target>
 {
     /// Creates a query with `ON CONFLICT (target) DO NOTHING`
     ///
@@ -345,17 +533,13 @@ impl<T: QuerySource, U, Op, Ret, Target>
     ///
     /// [`on_conflict_do_nothing`]: crate::query_builder::InsertStatement::on_conflict_do_nothing()
     /// [`on_conflict`]: crate::query_builder::InsertStatement::on_conflict()
-    pub fn do_nothing(
-        self,
-    ) -> InsertStatement<T, OnConflictValues<U, Target, DoNothing<T>>, Op, Ret> {
+    pub fn do_nothing(self) -> crate::dsl::DoNothing<Self> {
         let target = self.target;
         self.stmt.replace_values(|values| {
             OnConflictValues::new(values, target, DoNothing::new(), NoWhereClause)
         })
     }
-}
 
-impl<Stmt, Target> IncompleteOnConflict<Stmt, Target> {
     /// Used to create a query in the form `ON CONFLICT (...) DO UPDATE ... [WHERE ...]`
     ///
     /// Call `.set` on the result of this function with the changes you want to
@@ -365,8 +549,8 @@ impl<Stmt, Target> IncompleteOnConflict<Stmt, Target> {
     /// Note: When inserting more than one row at a time, this query can still fail
     /// if the rows being inserted conflict with each other.
     ///
-    /// Some backends (PostgreSQL) support `WHERE` clause is used to limit the rows actually updated.
-    /// For PostgreSQL you can use the `.filter()` method to add conditions like this.
+    /// For some backends (PostgreSQL, SQLite) a `WHERE` clause can be used to limit the rows actually updated.
+    /// For PostgreSQL and SQLite you can use the `.filter()` method to add conditions like that.
     ///
     /// # Examples
     ///
@@ -377,18 +561,32 @@ impl<Stmt, Target> IncompleteOnConflict<Stmt, Target> {
     /// ```rust
     /// # include!("on_conflict_docs_setup.rs");
     /// #
-    /// # #[cfg(not(feature = "mysql"))]
+    /// # // Reading the query result requires reading memory allocated by the
+    /// # // native sqlite library, which miri cannot track provenance for.
+    /// # #[cfg(not(any(feature = "mysql", feature = "mariadb")))]
+    /// # #[cfg(miri)]
+    /// # fn main() {}
+    /// # #[cfg(all(not(miri), not(any(feature = "mysql", feature = "mariadb"))))]
     /// # fn main() {
     /// #     use self::users::dsl::*;
     /// #     let conn = &mut establish_connection();
     /// #     #[cfg(feature = "postgres")]
     /// #     diesel::sql_query("TRUNCATE TABLE users").execute(conn).unwrap();
-    /// #     #[cfg(feature = "sqlite")]
+    /// #     #[cfg(feature = "__sqlite-shared")]
     /// #     diesel::sql_query("DELETE FROM users").execute(conn).unwrap();
-    /// let user = User { id: 1, name: "Pascal" };
-    /// let user2 = User { id: 1, name: "Sean" };
+    /// let user = User {
+    ///     id: 1,
+    ///     name: "Pascal",
+    /// };
+    /// let user2 = User {
+    ///     id: 1,
+    ///     name: "Sean",
+    /// };
     ///
-    /// assert_eq!(Ok(1), diesel::insert_into(users).values(&user).execute(conn));
+    /// assert_eq!(
+    ///     Ok(1),
+    ///     diesel::insert_into(users).values(&user).execute(conn)
+    /// );
     ///
     /// let insert_count = diesel::insert_into(users)
     ///     .values(&user2)
@@ -396,15 +594,18 @@ impl<Stmt, Target> IncompleteOnConflict<Stmt, Target> {
     ///     .do_update()
     ///     .set(name.eq("I DONT KNOW ANYMORE"))
     ///     .execute(conn);
-    /// # #[cfg(any(feature = "sqlite", feature = "postgres"))]
+    /// # #[cfg(any(feature = "__sqlite-shared", feature = "postgres"))]
     /// assert_eq!(Ok(1), insert_count);
-    /// # #[cfg(feature = "mysql")]
+    /// # #[cfg(any(feature = "mysql", feature = "mariadb"))]
     /// assert_eq!(Ok(2), insert_count);
     ///
     /// let users_in_db = users.load(conn);
-    /// assert_eq!(Ok(vec![(1, "I DONT KNOW ANYMORE".to_string())]), users_in_db);
+    /// assert_eq!(
+    ///     Ok(vec![(1, "I DONT KNOW ANYMORE".to_string())]),
+    ///     users_in_db
+    /// );
     /// # }
-    /// # #[cfg(feature = "mysql")]
+    /// # #[cfg(any(feature = "mysql", feature = "mariadb"))]
     /// # fn main() {}
     /// ```
     ///
@@ -413,15 +614,24 @@ impl<Stmt, Target> IncompleteOnConflict<Stmt, Target> {
     /// ```rust
     /// # include!("on_conflict_docs_setup.rs");
     /// #
-    /// # #[cfg(feature = "mysql")]
+    /// # #[cfg(any(feature = "mysql", feature = "mariadb"))]
     /// # fn main() -> diesel::QueryResult<()> {
     /// #     use self::users::dsl::*;
     /// #     let conn = &mut establish_connection();
     /// #     diesel::sql_query("DELETE FROM users").execute(conn).unwrap();
-    /// let user = User { id: 1, name: "Pascal" };
-    /// let user2 = User { id: 1, name: "Sean" };
+    /// let user = User {
+    ///     id: 1,
+    ///     name: "Pascal",
+    /// };
+    /// let user2 = User {
+    ///     id: 1,
+    ///     name: "Sean",
+    /// };
     ///
-    /// assert_eq!(Ok(1), diesel::insert_into(users).values(&user).execute(conn));
+    /// assert_eq!(
+    ///     Ok(1),
+    ///     diesel::insert_into(users).values(&user).execute(conn)
+    /// );
     ///
     /// diesel::insert_into(users)
     ///     .values(&user2)
@@ -431,10 +641,13 @@ impl<Stmt, Target> IncompleteOnConflict<Stmt, Target> {
     ///     .execute(conn)?;
     ///
     /// let users_in_db = users.load(conn);
-    /// assert_eq!(Ok(vec![(1, "I DONT KNOW ANYMORE".to_string())]), users_in_db);
+    /// assert_eq!(
+    ///     Ok(vec![(1, "I DONT KNOW ANYMORE".to_string())]),
+    ///     users_in_db
+    /// );
     /// # Ok(())
     /// # }
-    /// # #[cfg(not(feature = "mysql"))]
+    /// # #[cfg(not(any(feature = "mysql", feature = "mariadb")))]
     /// # fn main() {}
     /// ```
     ///
@@ -445,18 +658,32 @@ impl<Stmt, Target> IncompleteOnConflict<Stmt, Target> {
     /// ```rust
     /// # include!("on_conflict_docs_setup.rs");
     /// #
-    /// # #[cfg(not(feature = "mysql"))]
+    /// # // Reading the query result requires reading memory allocated by the
+    /// # // native sqlite library, which miri cannot track provenance for.
+    /// # #[cfg(not(any(feature = "mysql", feature = "mariadb")))]
+    /// # #[cfg(miri)]
+    /// # fn main() {}
+    /// # #[cfg(all(not(miri), not(any(feature = "mysql", feature = "mariadb"))))]
     /// # fn main() {
     /// #     use self::users::dsl::*;
     /// #     let conn = &mut establish_connection();
     /// #     #[cfg(feature = "postgres")]
     /// #     diesel::sql_query("TRUNCATE TABLE users").execute(conn).unwrap();
-    /// #     #[cfg(feature = "sqlite")]
+    /// #     #[cfg(feature = "__sqlite-shared")]
     /// #     diesel::sql_query("DELETE FROM users").execute(conn).unwrap();
-    /// let user = User { id: 1, name: "Pascal" };
-    /// let user2 = User { id: 1, name: "Sean" };
+    /// let user = User {
+    ///     id: 1,
+    ///     name: "Pascal",
+    /// };
+    /// let user2 = User {
+    ///     id: 1,
+    ///     name: "Sean",
+    /// };
     ///
-    /// assert_eq!(Ok(1), diesel::insert_into(users).values(&user).execute(conn));
+    /// assert_eq!(
+    ///     Ok(1),
+    ///     diesel::insert_into(users).values(&user).execute(conn)
+    /// );
     ///
     /// let insert_count = diesel::insert_into(users)
     ///     .values(&user2)
@@ -469,7 +696,7 @@ impl<Stmt, Target> IncompleteOnConflict<Stmt, Target> {
     /// let users_in_db = users.load(conn);
     /// assert_eq!(Ok(vec![(1, "Sean".to_string())]), users_in_db);
     /// # }
-    /// # #[cfg(feature = "mysql")]
+    /// # #[cfg(any(feature = "mysql", feature = "mariadb"))]
     /// # fn main() {}
     /// ```
     ///
@@ -478,15 +705,24 @@ impl<Stmt, Target> IncompleteOnConflict<Stmt, Target> {
     /// ```rust
     /// # include!("on_conflict_docs_setup.rs");
     ///
-    /// # #[cfg(feature = "mysql")]
+    /// # #[cfg(any(feature = "mysql", feature = "mariadb"))]
     /// # fn main() -> diesel::QueryResult<()> {
     /// #     use self::users::dsl::*;
     /// #     let conn = &mut establish_connection();
     /// #     diesel::sql_query("DELETE FROM users").execute(conn).unwrap();
-    /// let user = User { id: 1, name: "Pascal" };
-    /// let user2 = User { id: 1, name: "Sean" };
+    /// let user = User {
+    ///     id: 1,
+    ///     name: "Pascal",
+    /// };
+    /// let user2 = User {
+    ///     id: 1,
+    ///     name: "Sean",
+    /// };
     ///
-    /// assert_eq!(Ok(1), diesel::insert_into(users).values(&user).execute(conn));
+    /// assert_eq!(
+    ///     Ok(1),
+    ///     diesel::insert_into(users).values(&user).execute(conn)
+    /// );
     ///
     /// diesel::insert_into(users)
     ///     .values(&user2)
@@ -500,7 +736,7 @@ impl<Stmt, Target> IncompleteOnConflict<Stmt, Target> {
     /// # Ok(())
     /// # }
     ///
-    /// # #[cfg(not(feature = "mysql"))]
+    /// # #[cfg(not(any(feature = "mysql", feature = "mariadb")))]
     /// # fn main() {}
     /// ```
     ///
@@ -509,7 +745,7 @@ impl<Stmt, Target> IncompleteOnConflict<Stmt, Target> {
     /// ```rust
     /// # include!("on_conflict_docs_setup.rs");
     /// #
-    /// # #[cfg(any(feature = "sqlite", feature = "postgres"))]
+    /// # #[cfg(any(feature = "__sqlite-shared", feature = "postgres"))]
     /// # fn main() {
     /// #     use self::users::dsl::*;
     /// use diesel::upsert::excluded;
@@ -517,12 +753,24 @@ impl<Stmt, Target> IncompleteOnConflict<Stmt, Target> {
     /// #     let conn = &mut establish_connection();
     /// #     #[cfg(feature = "postgres")]
     /// #     diesel::sql_query("TRUNCATE TABLE users").execute(conn).unwrap();
-    /// let user = User { id: 1, name: "Pascal" };
-    /// let user2 = User { id: 1, name: "Sean" };
-    /// let user3 = User { id: 2, name: "Tess" };
+    /// let user = User {
+    ///     id: 1,
+    ///     name: "Pascal",
+    /// };
+    /// let user2 = User {
+    ///     id: 1,
+    ///     name: "Sean",
+    /// };
+    /// let user3 = User {
+    ///     id: 2,
+    ///     name: "Tess",
+    /// };
     ///
     /// # #[cfg(feature = "postgres")]
-    /// assert_eq!(Ok(1), diesel::insert_into(users).values(&user).execute(conn));
+    /// assert_eq!(
+    ///     Ok(1),
+    ///     diesel::insert_into(users).values(&user).execute(conn)
+    /// );
     ///
     /// #[cfg(feature = "postgres")]
     /// let insert_count = diesel::insert_into(users)
@@ -537,9 +785,12 @@ impl<Stmt, Target> IncompleteOnConflict<Stmt, Target> {
     /// # #[cfg(feature = "postgres")]
     /// let users_in_db = users.load(conn);
     /// # #[cfg(feature = "postgres")]
-    /// assert_eq!(Ok(vec![(1, "Sean".to_string()), (2, "Tess".to_string())]), users_in_db);
+    /// assert_eq!(
+    ///     Ok(vec![(1, "Sean".to_string()), (2, "Tess".to_string())]),
+    ///     users_in_db
+    /// );
     /// # }
-    /// # #[cfg(feature = "mysql")]
+    /// # #[cfg(any(feature = "mysql", feature = "mariadb"))]
     /// # fn main() {}
     /// ```
     ///
@@ -548,7 +799,12 @@ impl<Stmt, Target> IncompleteOnConflict<Stmt, Target> {
     /// ```rust
     /// # include!("on_conflict_docs_setup.rs");
     /// #
-    /// # #[cfg(feature = "postgres")]
+    /// # // Reading the query result requires reading memory allocated by the
+    /// # // native sqlite library, which miri cannot track provenance for.
+    /// # #[cfg(not(any(feature = "mysql", feature = "mariadb")))]
+    /// # #[cfg(miri)]
+    /// # fn main() {}
+    /// # #[cfg(all(not(miri), not(any(feature = "mysql", feature = "mariadb"))))]
     /// # fn main() {
     /// #     use diesel::QueryDsl;
     /// #     use diesel::query_dsl::methods::FilterDsl;
@@ -556,10 +812,21 @@ impl<Stmt, Target> IncompleteOnConflict<Stmt, Target> {
     /// #     let conn = &mut establish_connection();
     /// #     #[cfg(feature = "postgres")]
     /// #     diesel::sql_query("TRUNCATE TABLE users").execute(conn).unwrap();
-    /// let user = User { id: 1, name: "Pascal" };
-    /// let user2 = User { id: 1, name: "Sean" };
+    /// #     #[cfg(feature = "__sqlite-shared")]
+    /// #     diesel::delete(users).execute(conn).unwrap();
+    /// let user = User {
+    ///     id: 1,
+    ///     name: "Pascal",
+    /// };
+    /// let user2 = User {
+    ///     id: 1,
+    ///     name: "Sean",
+    /// };
     ///
-    /// assert_eq!(Ok(1), diesel::insert_into(users).values(&user).execute(conn));
+    /// assert_eq!(
+    ///     Ok(1),
+    ///     diesel::insert_into(users).values(&user).execute(conn)
+    /// );
     ///
     /// let insert_count = diesel::insert_into(users)
     ///     .values(&user2)
@@ -573,10 +840,10 @@ impl<Stmt, Target> IncompleteOnConflict<Stmt, Target> {
     /// let users_in_db = users.load(conn);
     /// assert_eq!(Ok(vec![(1, "Pascal".to_string())]), users_in_db);
     /// # }
-    /// # #[cfg(any(feature = "sqlite", feature = "mysql"))]
+    /// # #[cfg(any(feature = "mysql", feature = "mariadb"))]
     /// # fn main() {}
     /// ```
-    pub fn do_update(self) -> IncompleteDoUpdate<Stmt, Target> {
+    pub fn do_update(self) -> crate::dsl::DoUpdate<Self> {
         IncompleteDoUpdate {
             stmt: self.stmt,
             target: self.target,
@@ -591,16 +858,13 @@ pub struct IncompleteDoUpdate<Stmt, Target> {
     target: Target,
 }
 
-impl<T: QuerySource, U, Op, Ret, Target>
-    IncompleteDoUpdate<InsertStatement<T, U, Op, Ret>, Target>
+impl<T: QuerySource, U, Op, Ret, S, Target>
+    IncompleteDoUpdate<InsertStatement<T, U, Op, Ret, S>, Target>
 {
     /// See [`do_update`] for usage examples.
     ///
     /// [`do_update`]: IncompleteOnConflict::do_update()
-    pub fn set<Changes>(
-        self,
-        changes: Changes,
-    ) -> InsertStatement<T, OnConflictValues<U, Target, DoUpdate<Changes::Changeset, T>>, Op, Ret>
+    pub fn set<Changes>(self, changes: Changes) -> crate::dsl::Set<Self, Changes>
     where
         T: QuerySource,
         Changes: AsChangeset<Target = T>,
@@ -617,14 +881,14 @@ impl<T: QuerySource, U, Op, Ret, Target>
     }
 }
 
-impl<T, U, Op, Ret, Target, Action, WhereClause, Predicate> FilterDsl<Predicate>
-    for InsertStatement<T, OnConflictValues<U, Target, Action, WhereClause>, Op, Ret>
+impl<T, U, Op, Ret, S, Target, Action, WhereClause, Predicate> FilterDsl<Predicate>
+    for InsertStatement<T, OnConflictValues<U, Target, Action, WhereClause>, Op, Ret, S>
 where
     T: QuerySource,
     WhereClause: WhereAnd<Predicate>,
 {
     type Output =
-        InsertStatement<T, OnConflictValues<U, Target, Action, WhereClause::Output>, Op, Ret>;
+        InsertStatement<T, OnConflictValues<U, Target, Action, WhereClause::Output>, Op, Ret, S>;
 
     fn filter(self, predicate: Predicate) -> Self::Output {
         self.replace_values(|values| {
@@ -633,14 +897,14 @@ where
     }
 }
 
-impl<T, U, Op, Ret, Target, Action, WhereClause, Predicate> OrFilterDsl<Predicate>
-    for InsertStatement<T, OnConflictValues<U, Target, Action, WhereClause>, Op, Ret>
+impl<T, U, Op, Ret, S, Target, Action, WhereClause, Predicate> OrFilterDsl<Predicate>
+    for InsertStatement<T, OnConflictValues<U, Target, Action, WhereClause>, Op, Ret, S>
 where
     T: QuerySource,
     WhereClause: WhereOr<Predicate>,
 {
     type Output =
-        InsertStatement<T, OnConflictValues<U, Target, Action, WhereClause::Output>, Op, Ret>;
+        InsertStatement<T, OnConflictValues<U, Target, Action, WhereClause::Output>, Op, Ret, S>;
 
     fn or_filter(self, predicate: Predicate) -> Self::Output {
         self.replace_values(|values| {

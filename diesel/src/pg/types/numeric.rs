@@ -16,7 +16,7 @@ mod bigdecimal {
     use crate::serialize::{self, Output, ToSql};
     use crate::sql_types::Numeric;
 
-    use std::error::Error;
+    use core::error::Error;
 
     /// Iterator over the digits of a big uint in base 10k.
     /// The digits will be returned in little endian order.
@@ -53,7 +53,7 @@ mod bigdecimal {
                     ref digits,
                 } => (Sign::Minus, weight, scale, digits),
                 PgNumeric::NaN => {
-                    return Err(Box::from("NaN is not (yet) supported in BigDecimal"))
+                    return Err(Box::from("NaN is not (yet) supported in BigDecimal"));
                 }
             };
 
@@ -82,69 +82,88 @@ mod bigdecimal {
 
     // that should likely be a `TryFrom` impl
     // TODO: diesel 3.0
+    // This now mostly exists for backward compatibility
+    // Our own `ToSql` impls don't call it anymore in favour of calling
+    // the failable inner function instead
     #[cfg(all(feature = "postgres_backend", feature = "numeric"))]
     impl<'a> From<&'a BigDecimal> for PgNumeric {
-        // NOTE(clippy): No `std::ops::MulAssign` impl for `BigInt`
-        // NOTE(clippy): Clippy suggests to replace the `.take_while(|i| i.is_zero())`
-        // with `.take_while(Zero::is_zero)`, but that's a false positive.
-        // The closure gets an `&&i16` due to autoderef `<i16 as Zero>::is_zero(&self) -> bool`
-        // is called. There is no impl for `&i16` that would work with this closure.
-        #[allow(clippy::assign_op_pattern, clippy::redundant_closure)]
         fn from(decimal: &'a BigDecimal) -> Self {
-            let (mut integer, scale) = decimal.as_bigint_and_exponent();
-
-            // Handling of negative scale
-            let scale = if scale < 0 {
-                for _ in 0..(-scale) {
-                    integer = integer * 10;
-                }
-                0
-            } else {
-                scale
-                    .try_into()
-                    .expect("Scale is expected to be 16bit large")
-            };
-
-            integer = integer.abs();
-
-            // Ensure that the decimal will always lie on a digit boundary
-            for _ in 0..(4 - scale % 4) {
-                integer = integer * 10;
-            }
-            let integer = integer.to_biguint().expect("integer is always positive");
-
-            let mut digits = ToBase10000(Some(integer)).collect::<Vec<_>>();
-            digits.reverse();
-            let digits_after_decimal = scale / 4 + 1;
-            let weight = i16::try_from(digits.len())
-                .expect("Max digit number is expected to fit into 16 bit")
-                - i16::try_from(digits_after_decimal)
-                    .expect("Max digit number is expected to fit into 16 bit")
-                - 1;
-
-            let unnecessary_zeroes = digits.iter().rev().take_while(|i| i.is_zero()).count();
-
-            let relevant_digits = digits.len() - unnecessary_zeroes;
-            digits.truncate(relevant_digits);
-
-            match decimal.sign() {
-                Sign::Plus => PgNumeric::Positive {
-                    digits,
-                    scale,
-                    weight,
-                },
-                Sign::Minus => PgNumeric::Negative {
-                    digits,
-                    scale,
-                    weight,
-                },
-                Sign::NoSign => PgNumeric::Positive {
-                    digits: vec![0],
-                    scale: 0,
-                    weight: 0,
-                },
-            }
+            try_convert_decimal_to_pg_numeric(decimal)
+                .expect("Failed to convert BigDecimal to PgNumeric")
         }
+    }
+
+    // NOTE(clippy): No `std::ops::MulAssign` impl for `BigInt`
+    // NOTE(clippy): Clippy suggests to replace the `.take_while(|i| i.is_zero())`
+    // with `.take_while(Zero::is_zero)`, but that's a false positive.
+    // The closure gets an `&&i16` due to autoderef `<i16 as Zero>::is_zero(&self) -> bool`
+    // is called. There is no impl for `&i16` that would work with this closure.
+    #[allow(clippy::assign_op_pattern, clippy::redundant_closure)]
+    #[cfg(all(feature = "postgres_backend", feature = "numeric"))]
+    fn try_convert_decimal_to_pg_numeric(
+        decimal: &BigDecimal,
+    ) -> Result<PgNumeric, Box<dyn core::error::Error + Send + Sync>> {
+        let (mut integer, scale) = decimal.as_bigint_and_exponent();
+
+        // Handling of negative scale
+        let scale = if scale < -131064 {
+            // that's a guard avoiding the potential expensive calculation below
+            // by returning the error early on that beginning with this scale would
+            // be emitted anyway
+            return Err("Max digit number is expect to fit into 16 bit".into());
+        } else if scale < 0 {
+            integer = BigDecimal::new(integer, scale)
+                .with_scale(0)
+                .as_bigint_and_exponent()
+                .0;
+            0
+        } else {
+            scale
+                .try_into()
+                .map_err(|_| "Scale is expected to be 16bit large")?
+        };
+
+        integer = integer.abs();
+
+        // Ensure that the decimal will always lie on a digit boundary
+        for _ in 0..(4 - scale % 4) {
+            integer = integer * 10;
+        }
+        let integer = integer.to_biguint().ok_or("integer is always positive")?;
+
+        let mut digits = ToBase10000(Some(integer)).collect::<Vec<_>>();
+        digits.reverse();
+        let digits_after_decimal = scale / 4 + 1;
+        let weight = i16::try_from(digits.len())
+            .map_err(|_| "Max digit number is expected to fit into 16 bit")?
+            - i16::try_from(digits_after_decimal)
+                .map_err(|_| "Max digit number is expected to fit into 16 bit")?
+            - 1;
+
+        let unnecessary_zeroes = digits.iter().rev().take_while(|i| i.is_zero()).count();
+
+        let relevant_digits = digits.len() - unnecessary_zeroes;
+        digits.truncate(relevant_digits);
+
+        let result = match decimal.sign() {
+            Sign::Plus => PgNumeric::Positive {
+                digits,
+                scale,
+                weight,
+            },
+            Sign::Minus => PgNumeric::Negative {
+                digits,
+                scale,
+                weight,
+            },
+            Sign::NoSign => PgNumeric::Positive {
+                digits: vec![0],
+                scale: 0,
+                weight: 0,
+            },
+        };
+
+        Ok(result)
     }
 
     #[cfg(all(feature = "postgres_backend", feature = "numeric"))]
@@ -157,7 +176,7 @@ mod bigdecimal {
     #[cfg(all(feature = "postgres_backend", feature = "numeric"))]
     impl ToSql<Numeric, Pg> for BigDecimal {
         fn to_sql<'b>(&'b self, out: &mut Output<'b, '_, Pg>) -> serialize::Result {
-            let numeric = PgNumeric::from(self);
+            let numeric = try_convert_decimal_to_pg_numeric(self)?;
             ToSql::<Numeric, Pg>::to_sql(&numeric, &mut out.reborrow())
         }
     }
@@ -178,10 +197,12 @@ mod bigdecimal {
 
     #[cfg(test)]
     mod tests {
+        use crate::query_builder::ByteWrapper;
+
         use super::*;
         use std::str::FromStr;
 
-        #[test]
+        #[diesel_test_helper::test]
         fn bigdecimal_to_pgnumeric_converts_digits_to_base_10000() {
             let decimal = BigDecimal::from_str("1").unwrap();
             let expected = PgNumeric::Positive {
@@ -224,7 +245,7 @@ mod bigdecimal {
             assert_eq!(expected, decimal.into());
         }
 
-        #[test]
+        #[diesel_test_helper::test]
         fn bigdecimal_to_pg_numeric_properly_adjusts_scale() {
             let decimal = BigDecimal::from_str("1").unwrap();
             let expected = PgNumeric::Positive {
@@ -275,7 +296,7 @@ mod bigdecimal {
             assert_eq!(expected, decimal.into());
         }
 
-        #[test]
+        #[diesel_test_helper::test]
         fn bigdecimal_to_pg_numeric_retains_sign() {
             let decimal = BigDecimal::from_str("123.456").unwrap();
             let expected = PgNumeric::Positive {
@@ -294,7 +315,7 @@ mod bigdecimal {
             assert_eq!(expected, decimal.into());
         }
 
-        #[test]
+        #[diesel_test_helper::test]
         fn bigdecimal_with_negative_scale_to_pg_numeric_works() {
             let decimal = BigDecimal::new(50.into(), -2);
             let expected = PgNumeric::Positive {
@@ -313,7 +334,7 @@ mod bigdecimal {
             assert_eq!(expected, decimal.into());
         }
 
-        #[test]
+        #[diesel_test_helper::test]
         fn bigdecimal_with_negative_weight_to_pg_numeric_works() {
             let decimal = BigDecimal::from_str("0.1000000000000000").unwrap();
             let expected = PgNumeric::Positive {
@@ -340,7 +361,7 @@ mod bigdecimal {
             assert_eq!(expected, decimal.into());
         }
 
-        #[test]
+        #[diesel_test_helper::test]
         fn pg_numeric_to_bigdecimal_works() {
             let expected = BigDecimal::from_str("123.456").unwrap();
             let pg_numeric = PgNumeric::Positive {
@@ -359,6 +380,39 @@ mod bigdecimal {
             };
             let res: BigDecimal = pg_numeric.try_into().unwrap();
             assert_eq!(res, expected);
+        }
+
+        #[diesel_test_helper::test]
+        fn bigdecimal_with_huge_scale_errors() {
+            let huge_scale = "0.".to_string() + &"0".repeat(70_000) + "1";
+            let decimal = BigDecimal::from_str(&huge_scale).unwrap();
+            let mut v = Vec::new();
+            let output = ByteWrapper(&mut v);
+
+            let mut output = Output::test(output);
+            let r = <BigDecimal as ToSql<Numeric, Pg>>::to_sql(&decimal, &mut output);
+            assert!(r.is_err());
+        }
+
+        #[diesel_test_helper::test]
+        fn bigdecimal_negative_scale_doesnt_burn_cpu_time() {
+            let d = BigDecimal::from_str("1E+130000").expect("parse bigdecimal");
+            let n: PgNumeric = d.into();
+            assert_eq!(
+                n,
+                PgNumeric::Positive {
+                    weight: 32500,
+                    scale: 0,
+                    digits: vec![1]
+                }
+            );
+        }
+
+        #[diesel_test_helper::test]
+        #[should_panic]
+        fn bigdecimal_negative_scale_doesnt_burn_cpu_time_fast_error() {
+            let d = BigDecimal::from_str("1E+131064").expect("parse bigdecimal");
+            let _n: PgNumeric = d.into();
         }
     }
 }

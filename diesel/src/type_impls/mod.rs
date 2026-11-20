@@ -5,10 +5,17 @@ mod decimal;
     any(
         feature = "postgres_backend",
         feature = "mysql_backend",
-        feature = "sqlite"
+        feature = "__sqlite-shared",
+        feature = "mariadb_backend",
     )
 ))]
 mod json;
 mod option;
 mod primitives;
 pub(crate) mod tuples;
+
+#[cfg(all(
+    feature = "uuid",
+    any(feature = "postgres_backend", feature = "mariadb_backend",)
+))]
+mod uuid;

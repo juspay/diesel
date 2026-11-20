@@ -11,7 +11,7 @@ use crate::query_builder::{
     AstPass, BoxedSelectStatement, QueryFragment, QueryId, SelectQuery, SelectStatement,
 };
 use crate::sql_types::{self, SqlType};
-use std::marker::PhantomData;
+use core::marker::PhantomData;
 
 /// Creates an `ARRAY[e1, e2, ...]` or `ARRAY(subselect)` expression.
 ///
@@ -32,20 +32,16 @@ use std::marker::PhantomData;
 /// #     use diesel::dsl::array;
 /// #     use diesel::sql_types::Integer;
 /// #     let connection = &mut establish_connection();
-/// let ints = diesel::select(array::<Integer, _>((1, 2)))
-///     .get_result::<Vec<i32>>(connection)?;
+/// let ints = diesel::select(array::<Integer, _>((1, 2))).get_result::<Vec<i32>>(connection)?;
 /// assert_eq!(vec![1, 2], ints);
 ///
-/// let ids = users.select(array((id, id * 2)))
+/// let ids = users
+///     .select(array((id, id * 2)))
 ///     .get_results::<Vec<i32>>(connection)?;
-/// let expected = vec![
-///     vec![1, 2],
-///     vec![2, 4],
-/// ];
+/// let expected = vec![vec![1, 2], vec![2, 4]];
 /// assert_eq!(expected, ids);
 ///
-/// let ids = diesel::select(array(users.select(id)))
-///     .first::<Vec<i32>>(connection)?;
+/// let ids = diesel::select(array(users.select(id))).first::<Vec<i32>>(connection)?;
 /// assert_eq!(vec![1, 2], ids);
 /// #     Ok(())
 /// # }
@@ -58,7 +54,7 @@ where
     elements.into_array_expression()
 }
 
-/// Return type of [`array(tuple_or_subselect)`](super::dsl::array)
+/// Return type of [`array(tuple_or_subselect)`](super::dsl::array())
 #[allow(non_camel_case_types)]
 #[cfg(feature = "postgres_backend")]
 pub type array<ST, T> = <T as IntoArrayExpression<ST>>::ArrayExpression;
@@ -67,12 +63,12 @@ pub type array<ST, T> = <T as IntoArrayExpression<ST>>::ArrayExpression;
 ///
 /// This includes tuples of expressions with the same SQL type, and subselects with a single column.
 #[diagnostic::on_unimplemented(
-    message = "Cannot convert `{Self}` into an expression of type `Array<{ST}>`",
+    message = "cannot convert `{Self}` into an expression of type `Array<{ST}>`",
     note = "`the trait bound `{Self}: IntoArrayExpression<{ST}>` is not satisfied. \
         (`AsExpressionList` is a deprecated trait alias for `IntoArrayExpression`)"
 )]
 pub trait IntoArrayExpression<ST: SqlType + TypedExpressionType> {
-    /// Type of the expression returned by [AsArrayExpression::as_in_expression]
+    /// Type of the expression returned by [IntoArrayExpression::into_array_expression]
     type ArrayExpression: Expression<SqlType = sql_types::Array<ST>>;
 
     /// Construct the diesel query dsl representation of
@@ -122,7 +118,7 @@ macro_rules! tuple_impls {
     }
 }
 
-diesel_derives::__diesel_for_each_tuple!(tuple_impls);
+crate::for_each_tuple!(tuple_impls);
 
 /// An ARRAY[...] literal.
 #[derive(Debug, Clone, Copy, QueryId)]

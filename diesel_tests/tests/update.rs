@@ -1,7 +1,12 @@
+use crate::format_error;
 use crate::schema::*;
 use diesel::*;
 
-#[test]
+// This test reads query results, which requires reading memory
+// allocated by the native sqlite library. Miri cannot track the
+// provenance of that memory when using `-Zmiri-native-lib`.
+#[cfg(not(miri))]
+#[diesel_test_helper::test]
 fn test_updating_single_column() {
     use crate::schema::users::dsl::*;
 
@@ -16,7 +21,11 @@ fn test_updating_single_column() {
     assert_eq!(expected_data, data);
 }
 
-#[test]
+// This test reads query results, which requires reading memory
+// allocated by the native sqlite library. Miri cannot track the
+// provenance of that memory when using `-Zmiri-native-lib`.
+#[cfg(not(miri))]
+#[diesel_test_helper::test]
 fn test_updating_single_column_of_single_row() {
     use crate::schema::users::dsl::*;
 
@@ -33,7 +42,11 @@ fn test_updating_single_column_of_single_row() {
     assert_eq!(expected_data, data);
 }
 
-#[test]
+// This test reads query results, which requires reading memory
+// allocated by the native sqlite library. Miri cannot track the
+// provenance of that memory when using `-Zmiri-native-lib`.
+#[cfg(not(miri))]
+#[diesel_test_helper::test]
 fn test_updating_nullable_column() {
     use crate::schema::users::dsl::*;
 
@@ -64,7 +77,11 @@ fn test_updating_nullable_column() {
     assert_eq!(Ok(None::<String>), data);
 }
 
-#[test]
+// This test reads query results, which requires reading memory
+// allocated by the native sqlite library. Miri cannot track the
+// provenance of that memory when using `-Zmiri-native-lib`.
+#[cfg(not(miri))]
+#[diesel_test_helper::test]
 fn test_updating_multiple_columns() {
     use crate::schema::users::dsl::*;
 
@@ -81,7 +98,7 @@ fn test_updating_multiple_columns() {
     assert_eq!(Ok(expected_user), user);
 }
 
-#[test]
+#[diesel_test_helper::test]
 #[cfg(not(any(
     all(feature = "sqlite", not(feature = "returning_clauses_for_sqlite_3_35")),
     feature = "mysql"
@@ -90,6 +107,12 @@ fn update_returning_struct() {
     use crate::schema::users::dsl::*;
 
     let connection = &mut connection_with_sean_and_tess_in_users_table();
+
+    #[cfg(feature = "mariadb")]
+    if !mariadb_server_supports_update_returning(connection) {
+        return;
+    }
+
     let sean = find_user_by_name("Sean", connection);
     let user = update(users.filter(id.eq(sean.id)))
         .set(hair_color.eq("black"))
@@ -99,7 +122,7 @@ fn update_returning_struct() {
     assert_eq!(Ok(expected_user), user);
 }
 
-#[test]
+#[diesel_test_helper::test]
 #[cfg(not(any(
     all(feature = "sqlite", not(feature = "returning_clauses_for_sqlite_3_35")),
     feature = "mysql"
@@ -108,6 +131,12 @@ fn update_with_custom_returning_clause() {
     use crate::schema::users::dsl::*;
 
     let connection = &mut connection_with_sean_and_tess_in_users_table();
+
+    #[cfg(feature = "mariadb")]
+    if !mariadb_server_supports_update_returning(connection) {
+        return;
+    }
+
     let sean = find_user_by_name("Sean", connection);
     let user = update(users.filter(id.eq(sean.id)))
         .set(hair_color.eq("black"))
@@ -118,7 +147,11 @@ fn update_with_custom_returning_clause() {
     assert_eq!(Ok(expected_result), user);
 }
 
-#[test]
+// This test reads query results, which requires reading memory
+// allocated by the native sqlite library. Miri cannot track the
+// provenance of that memory when using `-Zmiri-native-lib`.
+#[cfg(not(miri))]
+#[diesel_test_helper::test]
 fn update_with_struct_as_changes() {
     use crate::schema::users::dsl::*;
 
@@ -136,7 +169,11 @@ fn update_with_struct_as_changes() {
     assert_eq!(Ok(expected_user), user);
 }
 
-#[test]
+// This test reads query results, which requires reading memory
+// allocated by the native sqlite library. Miri cannot track the
+// provenance of that memory when using `-Zmiri-native-lib`.
+#[cfg(not(miri))]
+#[diesel_test_helper::test]
 fn save_on_struct_with_primary_key_changes_that_struct() {
     use crate::schema::users::dsl::*;
 
@@ -149,7 +186,11 @@ fn save_on_struct_with_primary_key_changes_that_struct() {
     assert_eq!(user, user_in_db);
 }
 
-#[test]
+// This test reads query results, which requires reading memory
+// allocated by the native sqlite library. Miri cannot track the
+// provenance of that memory when using `-Zmiri-native-lib`.
+#[cfg(not(miri))]
+#[diesel_test_helper::test]
 fn sql_syntax_is_correct_when_option_field_comes_before_non_option() {
     #[derive(AsChangeset)]
     #[diesel(table_name = users)]
@@ -174,7 +215,11 @@ fn sql_syntax_is_correct_when_option_field_comes_before_non_option() {
     assert_eq!(Ok(expected_user), user);
 }
 
-#[test]
+// This test reads query results, which requires reading memory
+// allocated by the native sqlite library. Miri cannot track the
+// provenance of that memory when using `-Zmiri-native-lib`.
+#[cfg(not(miri))]
+#[diesel_test_helper::test]
 fn sql_syntax_is_correct_when_option_field_comes_mixed_with_non_option() {
     #[derive(AsChangeset)]
     #[diesel(table_name = posts)]
@@ -210,7 +255,7 @@ fn sql_syntax_is_correct_when_option_field_comes_mixed_with_non_option() {
     assert_eq!(expected_post, post);
 }
 
-#[test]
+#[diesel_test_helper::test]
 fn update_with_no_changes() {
     #[derive(AsChangeset)]
     #[diesel(table_name = users)]
@@ -228,7 +273,7 @@ fn update_with_no_changes() {
     assert!(update_result.is_err());
 }
 
-#[test]
+#[diesel_test_helper::test]
 fn update_with_optional_empty_changeset() {
     #[derive(AsChangeset)]
     #[diesel(table_name = users)]
@@ -250,7 +295,7 @@ fn update_with_optional_empty_changeset() {
     assert_eq!(None, update_result);
 }
 
-#[test]
+#[diesel_test_helper::test]
 #[cfg(any(feature = "postgres", feature = "sqlite"))]
 fn upsert_with_no_changes_executes_do_nothing() {
     #[derive(AsChangeset)]
@@ -270,8 +315,8 @@ fn upsert_with_no_changes_executes_do_nothing() {
     assert_eq!(Ok(0), result);
 }
 
-#[test]
-#[cfg(feature = "mysql")]
+#[diesel_test_helper::test]
+#[cfg(any(feature = "mysql", feature = "mariadb"))]
 fn upsert_with_no_changes_executes_do_nothing() {
     #[derive(AsChangeset)]
     #[diesel(table_name = users)]
@@ -287,13 +332,13 @@ fn upsert_with_no_changes_executes_do_nothing() {
         .set(&Changes { hair_color: None })
         .execute(connection);
 
-    #[cfg(not(feature = "mysql"))]
+    #[cfg(not(any(feature = "mysql", feature = "mariadb")))]
     assert_eq!(Ok(0), result);
-    #[cfg(feature = "mysql")]
+    #[cfg(any(feature = "mysql", feature = "mariadb"))]
     assert_eq!(Ok(1), result);
 }
 
-#[test]
+#[diesel_test_helper::test]
 #[cfg(any(feature = "postgres", feature = "sqlite"))]
 fn upsert_with_no_changes_executes_do_nothing_owned() {
     #[derive(AsChangeset)]
@@ -313,8 +358,8 @@ fn upsert_with_no_changes_executes_do_nothing_owned() {
     assert_eq!(Ok(0), result);
 }
 
-#[test]
-#[cfg(feature = "mysql")]
+#[diesel_test_helper::test]
+#[cfg(any(feature = "mysql", feature = "mariadb"))]
 fn upsert_with_no_changes_executes_do_nothing_owned() {
     #[derive(AsChangeset)]
     #[diesel(table_name = users)]
@@ -333,7 +378,7 @@ fn upsert_with_no_changes_executes_do_nothing_owned() {
     assert_eq!(Ok(1), result);
 }
 
-#[test]
+#[diesel_test_helper::test]
 #[cfg(feature = "postgres")]
 fn upsert_with_sql_literal_for_target() {
     use crate::schema::users::dsl::*;
@@ -378,7 +423,80 @@ fn upsert_with_sql_literal_for_target() {
     assert_eq!(Ok(expected_data), data);
 }
 
-#[test]
+#[diesel_test_helper::test]
+#[cfg(any(feature = "postgres", feature = "returning_clauses_for_sqlite_3_35"))]
+fn upsert_for_target_with_condition() {
+    use crate::schema::comments::dsl::*;
+    use diesel::query_dsl::methods::FilterDsl;
+    use diesel::upsert::*;
+
+    let connection = &mut connection();
+    diesel::sql_query(
+        "CREATE TEMPORARY TABLE comments(\
+            id INTEGER PRIMARY KEY NOT NULL, \
+            post_id INTEGER NOT NULL, \
+            text TEXT NOT NULL)",
+    )
+    .execute(connection)
+    .unwrap();
+
+    let new_comments = vec![Comment::new(0, 3, "Green"), Comment::new(1, 4, "Blue")];
+    // First, we populate the table with some data
+    for new_comment in new_comments {
+        let inserted_comment: Option<Comment> = insert_into(comments)
+            .values(&new_comment)
+            .get_results(connection)
+            .unwrap()
+            .pop();
+        assert_eq!(inserted_comment, Some(new_comment));
+    }
+
+    // Next, we execute an upsert where we want to update
+    // the rows that have been changed, which in this case
+    // are the rows with id 1.
+    // The row with id 0 should not be updated as it is identical
+    // to the one we inserted, and should be handled by a No-Op,
+    // while the row with id 2 is a new row that should be inserted.
+
+    let comment_to_not_update = Comment::new(0, 3, "Green");
+
+    let updated_comments: Vec<Comment> = insert_into(comments)
+        .values(&comment_to_not_update)
+        .on_conflict(id)
+        .do_update()
+        .set(&comment_to_not_update)
+        .filter(post_id.ne(excluded(post_id)).and(text.ne(excluded(text))))
+        .get_results(connection)
+        .unwrap();
+
+    assert!(updated_comments.is_empty());
+
+    let comments_to_update_or_insert = vec![Comment::new(1, 10, "Red"), Comment::new(2, 4, "Blue")];
+
+    for comment_to_update_or_insert in comments_to_update_or_insert {
+        let mut updated_comments: Vec<Comment> = insert_into(comments)
+            .values(&comment_to_update_or_insert)
+            .on_conflict(id)
+            .do_update()
+            .set((post_id.eq(excluded(post_id)), text.eq(excluded(text))))
+            .filter(post_id.ne(excluded(post_id)).and(text.ne(excluded(text))))
+            .get_results(connection)
+            .unwrap();
+        let updated_comment: Option<Comment> = updated_comments.pop();
+
+        assert_eq!(updated_comment, Some(comment_to_update_or_insert));
+    }
+
+    let data = comments.select((post_id, text)).order(id).load(connection);
+    let expected_data = vec![
+        (3, "Green".to_string()),
+        (10, "Red".to_string()),
+        (4, "Blue".to_string()),
+    ];
+    assert_eq!(Ok(expected_data), data);
+}
+
+#[diesel_test_helper::test]
 #[cfg(feature = "postgres")]
 fn upsert_with_sql_literal_for_target_with_condition() {
     use crate::schema::users::dsl::*;
@@ -427,7 +545,7 @@ fn upsert_with_sql_literal_for_target_with_condition() {
     assert_eq!(Ok(expected_data), data);
 }
 
-#[test]
+#[diesel_test_helper::test]
 #[cfg(feature = "postgres")]
 fn update_array_index_expression() {
     use crate::schema::posts::dsl::*;
@@ -448,8 +566,900 @@ fn update_array_index_expression() {
         .set(tags.index(1).eq("postgres"))
         .execute(connection)
         .unwrap();
-    let data = posts.select(tags).load(connection);
-    let expected_data = vec![vec!["postgres".to_string(), "rust".to_string()]];
+    update(posts)
+        .set(nullable_tags.index(1).eq("postgres"))
+        .execute(connection)
+        .unwrap();
+    let data = posts.select((tags, nullable_tags)).load(connection);
+    let expected_data = vec![(
+        vec!["postgres".to_string(), "rust".to_string()],
+        Some(vec!["postgres".to_string()]),
+    )];
 
     assert_eq!(Ok(expected_data), data);
+}
+
+#[diesel_test_helper::test]
+#[cfg(feature = "postgres")]
+fn update_array_slice_expression() {
+    use diesel::dsl::array;
+
+    use crate::schema::posts::dsl::*;
+
+    let connection = &mut connection_with_sean_and_tess_in_users_table();
+
+    let sean = find_user_by_name("Sean", connection);
+    let new_post = sean.new_post("Hello", Some("world"));
+    insert_into(posts)
+        .values(&new_post)
+        .execute(connection)
+        .unwrap();
+    update(posts)
+        .set(tags.eq(vec!["programming", "in", "rust"]))
+        .execute(connection)
+        .unwrap();
+    update(posts)
+        .set(tags.slice(2, 3).eq(array(("sql", "postgres"))))
+        .execute(connection)
+        .unwrap();
+    update(posts)
+        .set((nullable_tags.slice(1, 2)).eq(array(("postgres", "rust")).nullable()))
+        .execute(connection)
+        .unwrap();
+    let data = posts.select((tags, nullable_tags)).load(connection);
+    let expected_data = vec![(
+        vec![
+            "programming".to_string(),
+            "sql".to_string(),
+            "postgres".to_string(),
+        ],
+        Some(vec!["postgres".to_string(), "rust".to_string()]),
+    )];
+
+    assert_eq!(Ok(expected_data), data);
+}
+
+#[diesel_test_helper::test]
+#[cfg(feature = "postgres")]
+fn update_array_slice_from_expression() {
+    use diesel::dsl::array;
+
+    use crate::schema::posts::dsl::*;
+
+    let connection = &mut connection_with_sean_and_tess_in_users_table();
+
+    let sean = find_user_by_name("Sean", connection);
+    let new_post = sean.new_post("Hello", Some("world"));
+    insert_into(posts)
+        .values(&new_post)
+        .execute(connection)
+        .unwrap();
+    update(posts)
+        .set(tags.eq(vec!["programming", "in", "rust"]))
+        .execute(connection)
+        .unwrap();
+    update(posts)
+        .set(nullable_tags.eq(vec!["programming", "in", "rust"]))
+        .execute(connection)
+        .unwrap();
+    update(posts)
+        .set(tags.slice_from(2).eq(array(("sql", "postgres"))))
+        .execute(connection)
+        .unwrap();
+    update(posts)
+        .set((nullable_tags.assume_not_null().slice_from(3)).eq(array(("postgres", "rust"))))
+        .execute(connection)
+        .unwrap();
+    let data = posts.select((tags, nullable_tags)).load(connection);
+    let expected_data = vec![(
+        vec![
+            "programming".to_string(),
+            "sql".to_string(),
+            "postgres".to_string(),
+        ],
+        Some(vec![
+            "programming".to_string(),
+            "in".to_string(),
+            "postgres".to_string(),
+        ]),
+    )];
+
+    assert_eq!(Ok(expected_data), data);
+}
+
+#[diesel_test_helper::test]
+#[cfg(feature = "postgres")]
+fn update_array_slice_to_expression() {
+    use diesel::dsl::array;
+
+    use crate::schema::posts::dsl::*;
+
+    let connection = &mut connection_with_sean_and_tess_in_users_table();
+
+    let sean = find_user_by_name("Sean", connection);
+    let new_post = sean.new_post("Hello", Some("world"));
+    insert_into(posts)
+        .values(&new_post)
+        .execute(connection)
+        .unwrap();
+    update(posts)
+        .set(tags.eq(vec!["programming", "in", "rust"]))
+        .execute(connection)
+        .unwrap();
+    update(posts)
+        .set(nullable_tags.eq(vec!["programming", "in", "rust"]))
+        .execute(connection)
+        .unwrap();
+    update(posts)
+        .set(tags.slice_to(2).eq(array(("sql", "postgres"))))
+        .execute(connection)
+        .unwrap();
+    update(posts)
+        .set((nullable_tags.assume_not_null().slice_to(2)).eq(array(("postgres", "rust"))))
+        .execute(connection)
+        .unwrap();
+    let data = posts.select((tags, nullable_tags)).load(connection);
+    let expected_data = vec![(
+        vec![
+            "sql".to_string(),
+            "postgres".to_string(),
+            "rust".to_string(),
+        ],
+        Some(vec![
+            "postgres".to_string(),
+            "rust".to_string(),
+            "rust".to_string(),
+        ]),
+    )];
+
+    assert_eq!(Ok(expected_data), data);
+}
+
+#[diesel_test_helper::test]
+#[cfg(any(feature = "postgres", feature = "mariadb"))]
+fn returning_old_column_in_update() {
+    use crate::schema::users::dsl::*;
+
+    #[cfg(feature = "postgres")]
+    let old = diesel::pg::returning::old;
+
+    #[cfg(feature = "mariadb")]
+    let old = diesel::mariadb::returning::old_value;
+
+    let connection = &mut connection_with_sean_and_tess_in_users_table();
+
+    #[cfg(feature = "postgres")]
+    if !pg_server_supports_returning_old(connection) {
+        return;
+    }
+
+    #[cfg(feature = "mariadb")]
+    if !mariadb_server_supports_update_returning(connection) {
+        return;
+    }
+
+    let sean = find_user_by_name("Sean", connection);
+
+    let (was, now): (String, String) = update(users.filter(id.eq(sean.id)))
+        .set(name.eq("Renamed"))
+        .returning((old(name), name))
+        .get_result(connection)
+        .unwrap();
+
+    assert_eq!("Sean", was);
+    assert_eq!("Renamed", now);
+}
+
+#[diesel_test_helper::test]
+#[cfg(any(feature = "postgres", feature = "mariadb"))]
+fn returning_old_column_in_update_via_selectable() {
+    use crate::schema::users;
+
+    #[cfg(feature = "postgres")]
+    use diesel::pg::returning::old;
+
+    #[cfg(feature = "mariadb")]
+    use diesel::mariadb::returning::old_value as old;
+
+    let connection = &mut connection_with_sean_and_tess_in_users_table();
+
+    #[cfg(feature = "postgres")]
+    if !pg_server_supports_returning_old(connection) {
+        return;
+    }
+
+    #[cfg(feature = "mariadb")]
+    if !mariadb_server_supports_update_returning(connection) {
+        return;
+    }
+
+    // Mix `old(col)` and a raw column on the same table inside a `Selectable`
+    // struct: in `UPDATE`, the row necessarily existed pre-update, so `old(col)`
+    // has the same Rust SQL type as the column itself.
+    #[derive(Queryable, Selectable, PartialEq, Debug)]
+    #[diesel(table_name = users)]
+    struct UpdateOldNew {
+        #[diesel(select_expression = old(users::name))]
+        was: String,
+        name: String,
+    }
+
+    let sean = find_user_by_name("Sean", connection);
+
+    let row: UpdateOldNew = update(users::table.filter(users::id.eq(sean.id)))
+        .set(users::name.eq("Renamed"))
+        .returning(UpdateOldNew::as_select())
+        .get_result(connection)
+        .unwrap();
+
+    assert_eq!(
+        UpdateOldNew {
+            was: "Sean".to_string(),
+            name: "Renamed".to_string(),
+        },
+        row,
+    );
+}
+
+#[diesel_test_helper::test]
+#[cfg(feature = "mariadb")]
+fn returning_old_value_of_nullable_and_unsigned_columns() {
+    use crate::schema::{unsigned_widths, users};
+    use diesel::mariadb::returning::old_value;
+
+    let connection = &mut connection_with_sean_and_tess_in_users_table();
+    if !mariadb_server_supports_update_returning(connection) {
+        return;
+    }
+
+    let sean = find_user_by_name("Sean", connection);
+    let set_black = update(users::table.find(sean.id))
+        .set(users::hair_color.eq("black"))
+        .returning((old_value(users::hair_color), users::hair_color))
+        .get_result::<(Option<String>, Option<String>)>(connection);
+    assert_eq!(Ok((None, Some("black".to_string()))), set_black);
+    let set_null = update(users::table.find(sean.id))
+        .set(users::hair_color.eq(None::<String>))
+        .returning(old_value(users::hair_color))
+        .get_result::<Option<String>>(connection);
+    assert_eq!(Ok(Some("black".to_string())), set_null);
+
+    insert_into(unsigned_widths::table)
+        .values((
+            unsigned_widths::id.eq(1042_u32),
+            unsigned_widths::tiny_value.eq(200_u8),
+            unsigned_widths::small_value.eq(40_000_u16),
+            unsigned_widths::int_value.eq(4_000_000_000_u32),
+            unsigned_widths::big_value.eq(u64::MAX),
+        ))
+        .execute(connection)
+        .unwrap();
+    let was = update(unsigned_widths::table.find(1042_u32))
+        .set(unsigned_widths::big_value.eq(0_u64))
+        .returning(old_value(unsigned_widths::big_value))
+        .get_result::<u64>(connection);
+    assert_eq!(Ok(u64::MAX), was);
+}
+
+#[diesel_test_helper::test]
+#[cfg(feature = "mariadb")]
+fn returning_old_value_for_every_updated_row() {
+    use crate::schema::users;
+    use diesel::mariadb::returning::old_value;
+
+    let connection = &mut connection_with_sean_and_tess_in_users_table();
+    if !mariadb_server_supports_update_returning(connection) {
+        return;
+    }
+
+    let mut rows = update(users::table)
+        .set(users::name.eq("Jim"))
+        .returning((old_value(users::name), users::name))
+        .load::<(String, String)>(connection)
+        .unwrap();
+    rows.sort();
+    assert_eq!(
+        vec![
+            ("Sean".to_string(), "Jim".to_string()),
+            ("Tess".to_string(), "Jim".to_string()),
+        ],
+        rows,
+    );
+}
+
+#[diesel_test_helper::test]
+#[cfg(feature = "mariadb")]
+fn returning_boxed_old_value() {
+    use crate::schema::users;
+    use diesel::mariadb::returning::old_value;
+
+    let connection = &mut connection_with_sean_and_tess_in_users_table();
+    if !mariadb_server_supports_update_returning(connection) {
+        return;
+    }
+
+    let sean = find_user_by_name("Sean", connection);
+    let was = update(users::table.find(sean.id))
+        .set(users::name.eq("Jim"))
+        .returning(Box::new(old_value(users::name)))
+        .get_result::<String>(connection);
+    assert_eq!(Ok("Sean".to_string()), was);
+}
+
+#[diesel_test_helper::test]
+#[cfg(feature = "mariadb")]
+fn returning_old_value_assumed_not_null() {
+    use crate::schema::users;
+    use diesel::mariadb::Mariadb;
+    use diesel::mariadb::returning::old_value;
+
+    #[derive(Debug, PartialEq, Queryable, Selectable)]
+    #[diesel(table_name = users, check_for_backend(Mariadb))]
+    struct Recolored {
+        #[diesel(select_expression = old_value(users::hair_color).assume_not_null())]
+        was: String,
+        hair_color: Option<String>,
+    }
+
+    let connection = &mut connection_with_sean_and_tess_in_users_table();
+    if !mariadb_server_supports_update_returning(connection) {
+        return;
+    }
+
+    let sean = find_user_by_name("Sean", connection);
+    let was = update(users::table.find(sean.id))
+        .set(users::hair_color.eq("black"))
+        .returning(old_value(users::hair_color).assume_not_null().nullable())
+        .get_result::<Option<String>>(connection);
+    assert_eq!(Ok(None), was);
+
+    let was = update(users::table.find(sean.id))
+        .set(users::hair_color.eq("red"))
+        .returning(old_value(users::hair_color).assume_not_null())
+        .get_result::<String>(connection);
+    assert_eq!(Ok("black".to_string()), was);
+
+    let was = update(users::table.find(sean.id))
+        .set(users::name.eq("Jim"))
+        .returning(old_value(users::name).nullable().assume_not_null())
+        .get_result::<String>(connection);
+    assert_eq!(Ok("Sean".to_string()), was);
+
+    let row = update(users::table.find(sean.id))
+        .set(users::hair_color.eq("brown"))
+        .returning(Recolored::as_select())
+        .get_result(connection);
+    assert_eq!(
+        Ok(Recolored {
+            was: "red".to_string(),
+            hair_color: Some("brown".to_string()),
+        }),
+        row,
+    );
+}
+
+#[diesel_test_helper::test]
+#[cfg(feature = "mariadb")]
+fn returning_old_value_in_nullable_tuples() {
+    use crate::schema::users;
+    use diesel::mariadb::returning::old_value;
+
+    #[derive(Debug, PartialEq, Queryable, Selectable)]
+    #[diesel(table_name = users)]
+    struct PreviousName {
+        #[diesel(select_expression = old_value(users::name))]
+        name: String,
+    }
+
+    #[derive(Debug, PartialEq, Queryable, Selectable)]
+    #[diesel(table_name = users)]
+    struct Renamed {
+        #[diesel(embed)]
+        previous: Option<PreviousName>,
+        name: String,
+    }
+
+    #[derive(Debug, PartialEq, Queryable, Selectable)]
+    #[diesel(table_name = users)]
+    struct PreviousColor {
+        #[diesel(select_expression = old_value(users::hair_color).assume_not_null())]
+        hair_color: String,
+    }
+
+    #[derive(Debug, PartialEq, Queryable, Selectable)]
+    #[diesel(table_name = users)]
+    struct Recolored {
+        #[diesel(embed)]
+        previous: Option<PreviousColor>,
+        hair_color: Option<String>,
+    }
+
+    #[derive(Debug, PartialEq, Queryable, Selectable)]
+    #[diesel(table_name = users)]
+    struct PreviousNullableColor {
+        #[diesel(select_expression = old_value(users::hair_color))]
+        hair_color: Option<String>,
+    }
+
+    #[derive(Debug, PartialEq, Queryable, Selectable)]
+    #[diesel(table_name = users)]
+    struct NullablyRecolored {
+        #[diesel(embed)]
+        previous: Option<PreviousNullableColor>,
+        hair_color: Option<String>,
+    }
+
+    let connection = &mut connection_with_sean_and_tess_in_users_table();
+    if !mariadb_server_supports_update_returning(connection) {
+        return;
+    }
+
+    let sean = find_user_by_name("Sean", connection);
+    let row = update(users::table.find(sean.id))
+        .set(users::name.eq("Jim"))
+        .returning(Renamed::as_select())
+        .get_result(connection);
+    assert_eq!(
+        Ok(Renamed {
+            previous: Some(PreviousName {
+                name: "Sean".to_string(),
+            }),
+            name: "Jim".to_string(),
+        }),
+        row,
+    );
+
+    let row = update(users::table.find(sean.id))
+        .set(users::hair_color.eq("black"))
+        .returning(Recolored::as_select())
+        .get_result(connection);
+    assert_eq!(
+        Ok(Recolored {
+            previous: None,
+            hair_color: Some("black".to_string()),
+        }),
+        row,
+    );
+
+    let row = update(users::table.find(sean.id))
+        .set(users::hair_color.eq("red"))
+        .returning(Recolored::as_select())
+        .get_result(connection);
+    assert_eq!(
+        Ok(Recolored {
+            previous: Some(PreviousColor {
+                hair_color: "black".to_string(),
+            }),
+            hair_color: Some("red".to_string()),
+        }),
+        row,
+    );
+
+    let row = update(users::table.find(sean.id))
+        .set(users::hair_color.eq(None::<String>))
+        .returning(NullablyRecolored::as_select())
+        .get_result(connection);
+    assert_eq!(
+        Ok(NullablyRecolored {
+            previous: Some(PreviousNullableColor {
+                hair_color: Some("red".to_string()),
+            }),
+            hair_color: None,
+        }),
+        row,
+    );
+
+    let was = update(users::table.find(sean.id))
+        .set(users::name.eq("Sean"))
+        .returning((old_value(users::name), old_value(users::hair_color)).nullable())
+        .get_result::<Option<(String, Option<String>)>>(connection);
+    assert_eq!(Ok(Some(("Jim".to_string(), None))), was);
+}
+
+#[diesel_test_helper::test]
+#[cfg(feature = "mariadb")]
+fn returning_old_value_in_nested_selections() {
+    use crate::schema::users;
+    use diesel::mariadb::returning::old_value;
+
+    #[derive(Debug, PartialEq, Queryable, Selectable)]
+    #[diesel(table_name = users)]
+    struct Renamed {
+        #[diesel(select_expression = (old_value(users::name), old_value(users::id)))]
+        was: (String, i32),
+        name: String,
+    }
+
+    let connection = &mut connection_with_sean_and_tess_in_users_table();
+    if !mariadb_server_supports_update_returning(connection) {
+        return;
+    }
+
+    let sean = find_user_by_name("Sean", connection);
+    let row = update(users::table.find(sean.id))
+        .set(users::name.eq("Jim"))
+        .returning(((old_value(users::name),), users::name))
+        .get_result::<((String,), String)>(connection);
+    assert_eq!(Ok((("Sean".to_string(),), "Jim".to_string())), row);
+
+    let row = update(users::table.find(sean.id))
+        .set(users::name.eq("Tim"))
+        .returning(Renamed::as_returning())
+        .get_result(connection);
+    assert_eq!(
+        Ok(Renamed {
+            was: ("Jim".to_string(), sean.id),
+            name: "Tim".to_string(),
+        }),
+        row,
+    );
+}
+
+#[diesel_test_helper::test]
+#[cfg(feature = "mariadb")]
+fn returning_old_value_into_type_with_hand_written_from_sql() {
+    use crate::schema::users;
+    use diesel::backend::Backend;
+    use diesel::deserialize::{self, FromSql, FromSqlRow};
+    use diesel::mariadb::Mariadb;
+    use diesel::mariadb::returning::old_value;
+
+    #[derive(Debug, PartialEq, FromSqlRow)]
+    struct Nickname(String);
+
+    impl FromSql<sql_types::Text, Mariadb> for Nickname {
+        fn from_sql(value: <Mariadb as Backend>::RawValue<'_>) -> deserialize::Result<Self> {
+            <String as FromSql<sql_types::Text, Mariadb>>::from_sql(value).map(Nickname)
+        }
+    }
+
+    impl Selectable<Mariadb> for Nickname {
+        type SelectExpression = diesel::mariadb::returning::old_value<users::name>;
+
+        fn construct_selection() -> Self::SelectExpression {
+            old_value(users::name)
+        }
+    }
+
+    #[derive(Debug, PartialEq, Queryable, Selectable)]
+    #[diesel(table_name = users, check_for_backend(Mariadb))]
+    struct Renamed {
+        #[diesel(select_expression = old_value(users::name))]
+        was: Nickname,
+        #[diesel(select_expression = old_value(users::hair_color))]
+        hair_was: Option<Nickname>,
+        name: Nickname,
+    }
+
+    let connection = &mut connection_with_sean_and_tess_in_users_table();
+    if !mariadb_server_supports_update_returning(connection) {
+        return;
+    }
+
+    let sean = find_user_by_name("Sean", connection);
+    let was = update(users::table.find(sean.id))
+        .set(users::name.eq("Jim"))
+        .returning(old_value(users::name))
+        .get_result::<Nickname>(connection);
+    assert_eq!(Ok(Nickname("Sean".to_string())), was);
+
+    let row = update(users::table.find(sean.id))
+        .set(users::name.eq("Sean"))
+        .returning(Renamed::as_select())
+        .get_result(connection);
+    assert_eq!(
+        Ok(Renamed {
+            was: Nickname("Jim".to_string()),
+            hair_was: None,
+            name: Nickname("Sean".to_string()),
+        }),
+        row,
+    );
+
+    let was = update(users::table.find(sean.id))
+        .set(users::name.eq("Tim"))
+        .returning(Nickname::as_select())
+        .get_result(connection);
+    assert_eq!(Ok(Nickname("Sean".to_string())), was);
+}
+
+#[diesel_test_helper::test]
+#[cfg(feature = "mariadb")]
+fn returning_old_value_in_embedded_selectable() {
+    use crate::schema::users;
+    use diesel::mariadb::Mariadb;
+    use diesel::mariadb::returning::old_value;
+
+    #[derive(Debug, PartialEq, Queryable, Selectable)]
+    #[diesel(table_name = users, check_for_backend(Mariadb))]
+    struct Previous {
+        #[diesel(select_expression = old_value(users::name))]
+        name: String,
+        #[diesel(select_expression = old_value(users::hair_color))]
+        hair_color: Option<String>,
+    }
+
+    #[derive(Debug, PartialEq, Queryable, Selectable)]
+    #[diesel(table_name = users, check_for_backend(Mariadb))]
+    struct Renamed {
+        #[diesel(embed)]
+        previous: Previous,
+        name: String,
+    }
+
+    let connection = &mut connection_with_sean_and_tess_in_users_table();
+    if !mariadb_server_supports_update_returning(connection) {
+        return;
+    }
+
+    let sean = find_user_by_name("Sean", connection);
+    let row = update(users::table.find(sean.id))
+        .set(users::name.eq("Jim"))
+        .returning(Renamed::as_select())
+        .get_result(connection);
+    assert_eq!(
+        Ok(Renamed {
+            previous: Previous {
+                name: "Sean".to_string(),
+                hair_color: None,
+            },
+            name: "Jim".to_string(),
+        }),
+        row,
+    );
+}
+
+#[diesel_test_helper::test]
+#[cfg(feature = "postgres")]
+fn returning_subselect_and_old_in_update() {
+    use crate::schema::{posts, users};
+
+    use diesel::pg::returning::old;
+
+    let connection = &mut connection_with_sean_and_tess_in_users_table();
+
+    if !pg_server_supports_returning_old(connection) {
+        return;
+    }
+
+    let sean = find_user_by_name("Sean", connection);
+    insert_into(posts::table)
+        .values((posts::user_id.eq(sean.id), posts::title.eq("First Post")))
+        .execute(connection)
+        .unwrap();
+
+    // Tests that a RETURNING clause can combine `old(col)` with a correlated
+    // subselect, and that `old(col)` can be used inside the subselect's WHERE
+    // to correlate with the pre-update row, and that boxed expressions work even
+    // if the QS type does not involve `ReturningQuerySource<UpdateStmt, ...>`.
+    let boxed_expr: Box<
+        dyn BoxableExpression<users::table, diesel::pg::Pg, SqlType = diesel::sql_types::Text>,
+    > = Box::new(users::name);
+    let (was, now, post_by_new_id, post_by_old_id, now_boxed): (
+        String,
+        String,
+        Option<String>,
+        Option<String>,
+        String,
+    ) = update(users::table.filter(users::id.eq(sean.id)))
+        .set(users::name.eq("Renamed"))
+        .returning((
+            old(users::name),
+            users::name,
+            posts::table
+                .select(posts::title)
+                .filter(posts::user_id.eq(users::id))
+                .single_value(),
+            posts::table
+                .select(posts::title)
+                .filter(posts::user_id.eq(old(users::id)))
+                .single_value(),
+            boxed_expr,
+        ))
+        .get_result(connection)
+        .unwrap();
+
+    assert_eq!("Sean", was);
+    assert_eq!("Renamed", now);
+    assert_eq!(Some("First Post".to_string()), post_by_new_id);
+    assert_eq!(Some("First Post".to_string()), post_by_old_id);
+    assert_eq!("Renamed", now_boxed);
+}
+
+// This test reads query results, which requires reading memory
+// allocated by the native sqlite library. Miri cannot track the
+// provenance of that memory when using `-Zmiri-native-lib`.
+#[cfg(not(miri))]
+#[diesel_test_helper::test]
+fn named_struct_batch() {
+    #[derive(Debug, Clone, AsChangeset, Identifiable)]
+    struct User {
+        id: i32,
+        name: String,
+        hair_color: String,
+    }
+
+    let connection = &mut connection_with_sean_and_tess_in_users_table();
+
+    let update_sean = User {
+        id: 1,
+        name: String::from("Sean"),
+        hair_color: String::from("blue1"),
+    };
+    let update_tess = User {
+        id: 2,
+        name: String::from("Tess"),
+        hair_color: String::from("black1"),
+    };
+
+    // Check compilation and query for &[]
+    let users_batch = [update_sean, update_tess];
+    let update_users = update(users::table).set(&users_batch);
+    let debug_slice_users = diesel::debug_query::<crate::schema::TestBackend, _>(&update_users);
+
+    // Check compilation and query for [; 2]
+    let update_users = update(users::table).set(users_batch.clone());
+    let debug_arr_users = diesel::debug_query::<crate::schema::TestBackend, _>(&update_users);
+
+    // Check compilation and query for &Vec
+    let users_batch: Vec<User> = Vec::from(&users_batch);
+    let update_users = update(users::table).set(&users_batch);
+    let debug_vec_ref_users = diesel::debug_query::<crate::schema::TestBackend, _>(&update_users);
+
+    // Check compilation and query for Vec
+    let update_users = update(users::table).set(users_batch.clone());
+    let debug_vec_users = diesel::debug_query::<crate::schema::TestBackend, _>(&update_users);
+
+    // Check compilation for Box<[U]>
+    let users_batch = users_batch.clone().into_boxed_slice();
+    let update_users = update(users::table).set(users_batch);
+    let debug_boxed_slice_users =
+        diesel::debug_query::<crate::schema::TestBackend, _>(&update_users);
+
+    // Expected to create the same query
+    assert_eq!(debug_arr_users.to_string(), debug_slice_users.to_string());
+    assert_eq!(debug_arr_users.to_string(), debug_vec_ref_users.to_string());
+    assert_eq!(debug_arr_users.to_string(), debug_vec_users.to_string());
+    assert_eq!(
+        debug_arr_users.to_string(),
+        debug_boxed_slice_users.to_string()
+    );
+
+    // Should update both Jim and Tess
+    update_users.execute(connection).unwrap();
+
+    let expected = vec![
+        (1, String::from("Sean"), Some(String::from("blue1"))),
+        (2, String::from("Tess"), Some(String::from("black1"))),
+    ];
+    let actual = users::table.order(users::id).load(connection);
+    assert_eq!(Ok(expected), actual);
+}
+
+// This test reads query results, which requires reading memory
+// allocated by the native sqlite library. Miri cannot track the
+// provenance of that memory when using `-Zmiri-native-lib`.
+#[cfg(not(miri))]
+#[diesel_test_helper::test]
+fn named_struct_batch_grouped_pkey() {
+    table! {
+        #[sql_name = "users"]
+        users_alt (id, name) {
+            id -> Integer,
+            name -> Text,
+            hair_color -> Nullable<Text>,
+        }
+    }
+
+    // Switched order of fields still works.
+    #[derive(Debug, Clone, AsChangeset, Identifiable)]
+    #[diesel(primary_key(id, name))] // mandatory: provide grouped primary key.
+    #[diesel(table_name = users_alt)]
+    struct User {
+        hair_color: String,
+        id: i32,
+        name: String,
+    }
+
+    let connection = &mut connection_with_sean_and_tess_in_users_table();
+
+    let update_sean = User {
+        id: 1,
+        name: String::from("Sean"),
+        hair_color: String::from("blue2"),
+    };
+    let update_tess = User {
+        id: 2,
+        name: String::from("Tess_not_found"),
+        hair_color: String::from("black2"),
+    };
+
+    // Check compilation and query for &[]
+    let users_batch = [update_sean, update_tess];
+    let update_users = update(users_alt::table).set(&users_batch);
+    let debug_arr_users = diesel::debug_query::<crate::schema::TestBackend, _>(&update_users);
+
+    // Check compilation and query for &Vec
+    let users_batch: Vec<User> = Vec::from(&users_batch);
+    let update_users = update(users_alt::table).set(&users_batch);
+    let debug_vec_ref_users = diesel::debug_query::<crate::schema::TestBackend, _>(&update_users);
+
+    // Check compilation and query for Vec
+    let users_batch = users_batch.clone();
+    let update_users = update(users_alt::table).set(users_batch);
+    let debug_vec_users = diesel::debug_query::<crate::schema::TestBackend, _>(&update_users);
+
+    // Expected to create the same query
+    assert_eq!(debug_arr_users.to_string(), debug_vec_ref_users.to_string());
+    assert_eq!(debug_arr_users.to_string(), debug_vec_users.to_string());
+
+    // Should update both Jim and Tess
+    update_users.execute(connection).unwrap();
+
+    let expected = vec![
+        (1, String::from("Sean"), Some(String::from("blue2"))),
+        (2, String::from("Tess"), None),
+    ];
+    let actual = users_alt::table.order(users_alt::id).load(connection);
+    assert_eq!(Ok(expected), actual);
+}
+
+#[cfg(any(
+    all(feature = "sqlite", feature = "returning_clauses_for_sqlite_3_35"),
+    feature = "postgres"
+))]
+#[diesel_test_helper::test]
+fn named_struct_batch_returning() {
+    #[derive(Debug, Clone, AsChangeset, Identifiable)]
+    struct User {
+        id: i32,
+        name: String,
+        hair_color: String,
+    }
+
+    let connection = &mut connection_with_sean_and_tess_in_users_table();
+
+    let update_sean = User {
+        id: 1,
+        name: String::from("Sean"),
+        hair_color: String::from("blue1"),
+    };
+    let update_tess = User {
+        id: 2,
+        name: String::from("Tess"),
+        hair_color: String::from("black1"),
+    };
+
+    let users_batch = [update_sean, update_tess];
+    let update_users = update(users::table)
+        .set(&users_batch)
+        .get_results::<(i32, String, Option<String>)>(connection)
+        .unwrap();
+
+    let expected = [
+        (1, String::from("Sean"), Some(String::from("blue1"))),
+        (2, String::from("Tess"), Some(String::from("black1"))),
+    ];
+    assert_eq!(update_users, expected);
+}
+
+#[diesel_test_helper::test]
+fn named_struct_batch_empty() {
+    #[derive(Debug, Clone, AsChangeset, Identifiable)]
+    struct User {
+        id: i32,
+        name: String,
+        hair_color: String,
+    }
+
+    let connection = &mut connection_with_sean_and_tess_in_users_table();
+
+    let users_batch: Vec<User> = Vec::new();
+    let update_users = update(users::table).set(&users_batch).execute(connection);
+
+    assert!(update_users.is_err());
+    assert_eq!(
+        format_error(&update_users.unwrap_err()),
+        "There are no changes to save. This query cannot be built"
+    );
 }

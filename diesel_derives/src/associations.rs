@@ -5,16 +5,16 @@ use syn::parse_quote;
 use syn::{DeriveInput, Ident, Lifetime, Result};
 
 use crate::model::Model;
-use crate::parsers::BelongsTo;
 use crate::util::{camel_to_snake, wrap_in_dummy_mod};
+use diesel_attribute_parser::parsers::BelongsTo;
 
 pub fn derive(item: DeriveInput) -> Result<TokenStream> {
     let model = Model::from_item(&item, false, false)?;
 
     if model.belongs_to.is_empty() {
         return Err(syn::Error::new(
-            proc_macro2::Span::call_site(),
-            "At least one `belongs_to` is needed for deriving `Associations` on a structure.",
+            proc_macro2::Span::mixed_site(),
+            "at least one `belongs_to` is needed for deriving `Associations` on a structure.",
         ));
     }
 

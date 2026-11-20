@@ -12,7 +12,7 @@ use super::{Pg, PgTypeMetadata};
 use crate::connection::{DefaultLoadingMode, LoadConnection};
 use crate::prelude::*;
 
-use std::borrow::Cow;
+use alloc::borrow::Cow;
 use std::collections::HashMap;
 
 /// Determines the OID of types at runtime
@@ -37,7 +37,7 @@ pub trait PgMetadataLookup {
     #[diesel_derives::__diesel_public_if(
         feature = "i-implement-a-third-party-backend-and-opt-into-breaking-changes"
     )]
-    fn as_any<'a>(&mut self) -> &mut (dyn std::any::Any + 'a)
+    fn as_any<'a>(&mut self) -> &mut (dyn core::any::Any + 'a)
     where
         Self: 'a,
     {
@@ -77,7 +77,7 @@ where
         }
     }
 
-    fn as_any<'a>(&mut self) -> &mut (dyn std::any::Any + 'a)
+    fn as_any<'a>(&mut self) -> &mut (dyn core::any::Any + 'a)
     where
         Self: 'a,
     {
@@ -214,4 +214,7 @@ table! {
 joinable!(pg_type -> pg_namespace(typnamespace));
 allow_tables_to_appear_in_same_query!(pg_type, pg_namespace);
 
-define_sql_function! { fn pg_my_temp_schema() -> Oid; }
+#[declare_sql_function]
+extern "SQL" {
+    fn pg_my_temp_schema() -> Oid;
+}

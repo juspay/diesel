@@ -2,6 +2,7 @@ use super::backend::Pg;
 use crate::query_builder::QueryBuilder;
 use crate::result::QueryResult;
 
+mod batch_update;
 pub(crate) mod copy;
 mod distinct_on;
 mod limit_offset;
@@ -57,7 +58,8 @@ impl QueryBuilder<Pg> for PgQueryBuilder {
     }
 }
 
-#[test]
+#[cfg(test)]
+#[diesel_test_helper::test]
 fn check_sql_query_increments_bind_count() {
     use crate::query_builder::{AstPass, AstPassToSqlOptions, QueryFragment};
     use crate::sql_types::*;

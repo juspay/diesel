@@ -82,16 +82,16 @@ fn parse_julian(julian_days: f64) -> Option<NaiveDateTime> {
     NaiveDateTime::from_timestamp_opt(seconds, nanos)
 }
 
-#[cfg(all(feature = "sqlite", feature = "chrono"))]
+#[cfg(all(feature = "__sqlite-shared", feature = "chrono"))]
 impl FromSql<Date, Sqlite> for NaiveDate {
-    fn from_sql(value: <Sqlite as Backend>::RawValue<'_>) -> deserialize::Result<Self> {
+    fn from_sql(mut value: <Sqlite as Backend>::RawValue<'_>) -> deserialize::Result<Self> {
         value
             .parse_string(|s| Self::parse_from_str(s, DATE_FORMAT))
             .map_err(Into::into)
     }
 }
 
-#[cfg(all(feature = "sqlite", feature = "chrono"))]
+#[cfg(all(feature = "__sqlite-shared", feature = "chrono"))]
 impl ToSql<Date, Sqlite> for NaiveDate {
     fn to_sql<'b>(&'b self, out: &mut Output<'b, '_, Sqlite>) -> serialize::Result {
         out.set_value(self.format(DATE_FORMAT).to_string());
@@ -99,9 +99,9 @@ impl ToSql<Date, Sqlite> for NaiveDate {
     }
 }
 
-#[cfg(all(feature = "sqlite", feature = "chrono"))]
+#[cfg(all(feature = "__sqlite-shared", feature = "chrono"))]
 impl FromSql<Time, Sqlite> for NaiveTime {
-    fn from_sql(value: <Sqlite as Backend>::RawValue<'_>) -> deserialize::Result<Self> {
+    fn from_sql(mut value: <Sqlite as Backend>::RawValue<'_>) -> deserialize::Result<Self> {
         value.parse_string(|text| {
             for format in TIME_FORMATS {
                 if let Ok(time) = Self::parse_from_str(text, format) {
@@ -114,7 +114,7 @@ impl FromSql<Time, Sqlite> for NaiveTime {
     }
 }
 
-#[cfg(all(feature = "sqlite", feature = "chrono"))]
+#[cfg(all(feature = "__sqlite-shared", feature = "chrono"))]
 impl ToSql<Time, Sqlite> for NaiveTime {
     fn to_sql<'b>(&'b self, out: &mut Output<'b, '_, Sqlite>) -> serialize::Result {
         out.set_value(self.format(ENCODE_TIME_FORMAT).to_string());
@@ -122,9 +122,9 @@ impl ToSql<Time, Sqlite> for NaiveTime {
     }
 }
 
-#[cfg(all(feature = "sqlite", feature = "chrono"))]
+#[cfg(all(feature = "__sqlite-shared", feature = "chrono"))]
 impl FromSql<Timestamp, Sqlite> for NaiveDateTime {
-    fn from_sql(value: <Sqlite as Backend>::RawValue<'_>) -> deserialize::Result<Self> {
+    fn from_sql(mut value: <Sqlite as Backend>::RawValue<'_>) -> deserialize::Result<Self> {
         value.parse_string(|text| {
             for format in NAIVE_DATETIME_FORMATS {
                 if let Ok(dt) = Self::parse_from_str(text, format) {
@@ -132,10 +132,10 @@ impl FromSql<Timestamp, Sqlite> for NaiveDateTime {
                 }
             }
 
-            if let Ok(julian_days) = text.parse::<f64>() {
-                if let Some(timestamp) = parse_julian(julian_days) {
-                    return Ok(timestamp);
-                }
+            if let Ok(julian_days) = text.parse::<f64>()
+                && let Some(timestamp) = parse_julian(julian_days)
+            {
+                return Ok(timestamp);
             }
 
             Err(format!("Invalid datetime {text}").into())
@@ -143,7 +143,7 @@ impl FromSql<Timestamp, Sqlite> for NaiveDateTime {
     }
 }
 
-#[cfg(all(feature = "sqlite", feature = "chrono"))]
+#[cfg(all(feature = "__sqlite-shared", feature = "chrono"))]
 impl ToSql<Timestamp, Sqlite> for NaiveDateTime {
     fn to_sql<'b>(&'b self, out: &mut Output<'b, '_, Sqlite>) -> serialize::Result {
         out.set_value(self.format(ENCODE_NAIVE_DATETIME_FORMAT).to_string());
@@ -151,38 +151,24 @@ impl ToSql<Timestamp, Sqlite> for NaiveDateTime {
     }
 }
 
-#[cfg(all(feature = "sqlite", feature = "chrono"))]
+// A naive datetime carries no offset, so it reads and writes as a plain `Timestamp`.
+#[cfg(all(feature = "__sqlite-shared", feature = "chrono"))]
 impl FromSql<TimestamptzSqlite, Sqlite> for NaiveDateTime {
     fn from_sql(value: <Sqlite as Backend>::RawValue<'_>) -> deserialize::Result<Self> {
-        value.parse_string(|text| {
-            for format in NAIVE_DATETIME_FORMATS {
-                if let Ok(dt) = Self::parse_from_str(text, format) {
-                    return Ok(dt);
-                }
-            }
-
-            if let Ok(julian_days) = text.parse::<f64>() {
-                if let Some(timestamp) = parse_julian(julian_days) {
-                    return Ok(timestamp);
-                }
-            }
-
-            Err(format!("Invalid datetime {text}").into())
-        })
+        FromSql::<Timestamp, Sqlite>::from_sql(value)
     }
 }
 
-#[cfg(all(feature = "sqlite", feature = "chrono"))]
+#[cfg(all(feature = "__sqlite-shared", feature = "chrono"))]
 impl ToSql<TimestamptzSqlite, Sqlite> for NaiveDateTime {
     fn to_sql<'b>(&'b self, out: &mut Output<'b, '_, Sqlite>) -> serialize::Result {
-        out.set_value(self.format(ENCODE_NAIVE_DATETIME_FORMAT).to_string());
-        Ok(IsNull::No)
+        ToSql::<Timestamp, Sqlite>::to_sql(self, out)
     }
 }
 
-#[cfg(all(feature = "sqlite", feature = "chrono"))]
+#[cfg(all(feature = "__sqlite-shared", feature = "chrono"))]
 impl FromSql<TimestamptzSqlite, Sqlite> for DateTime<Utc> {
-    fn from_sql(value: <Sqlite as Backend>::RawValue<'_>) -> deserialize::Result<Self> {
+    fn from_sql(mut value: <Sqlite as Backend>::RawValue<'_>) -> deserialize::Result<Self> {
         // First try to parse the timezone
         if let Ok(dt) = value.parse_string(|text| {
             for format in DATETIME_FORMATS {
@@ -203,9 +189,9 @@ impl FromSql<TimestamptzSqlite, Sqlite> for DateTime<Utc> {
     }
 }
 
-#[cfg(all(feature = "sqlite", feature = "chrono"))]
+#[cfg(all(feature = "__sqlite-shared", feature = "chrono"))]
 impl FromSql<TimestamptzSqlite, Sqlite> for DateTime<Local> {
-    fn from_sql(value: <Sqlite as Backend>::RawValue<'_>) -> deserialize::Result<Self> {
+    fn from_sql(mut value: <Sqlite as Backend>::RawValue<'_>) -> deserialize::Result<Self> {
         // First try to parse the timezone
         if let Ok(dt) = value.parse_string(|text| {
             for format in DATETIME_FORMATS {
@@ -226,7 +212,7 @@ impl FromSql<TimestamptzSqlite, Sqlite> for DateTime<Local> {
     }
 }
 
-#[cfg(all(feature = "sqlite", feature = "chrono"))]
+#[cfg(all(feature = "__sqlite-shared", feature = "chrono"))]
 impl<TZ: TimeZone> ToSql<TimestamptzSqlite, Sqlite> for DateTime<TZ> {
     fn to_sql<'b>(&'b self, out: &mut Output<'b, '_, Sqlite>) -> serialize::Result {
         // Converting to UTC ensures consistency
@@ -236,28 +222,37 @@ impl<TZ: TimeZone> ToSql<TimestamptzSqlite, Sqlite> for DateTime<TZ> {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(all(target_family = "wasm", target_os = "unknown"))))]
 #[allow(clippy::unwrap_used)]
 mod tests {
     extern crate chrono;
     extern crate dotenvy;
 
     use self::chrono::{
-        DateTime, Duration, FixedOffset, NaiveDate, NaiveDateTime, NaiveTime, TimeZone, Timelike,
-        Utc,
+        DateTime, FixedOffset, NaiveDate, NaiveDateTime, NaiveTime, TimeZone, Timelike, Utc,
     };
+    // `Duration` and `now` are only used by the tests that compare against the
+    // current time, which Miri cannot read from the host while isolation is
+    // enabled.
+    #[cfg(not(miri))]
+    use self::chrono::Duration;
 
-    use crate::dsl::{now, sql};
+    #[cfg(not(miri))]
+    use crate::dsl::now;
+    use crate::dsl::sql;
     use crate::prelude::*;
     use crate::select;
     use crate::sql_types::{Text, Time, Timestamp, TimestamptzSqlite};
     use crate::test_helpers::connection;
 
-    define_sql_function!(fn datetime(x: Text) -> Timestamp);
-    define_sql_function!(fn time(x: Text) -> Time);
-    define_sql_function!(fn date(x: Text) -> Date);
+    #[declare_sql_function]
+    extern "SQL" {
+        fn datetime(x: Text) -> Timestamp;
+        fn time(x: Text) -> Time;
+        fn date(x: Text) -> Date;
+    }
 
-    #[test]
+    #[diesel_test_helper::test]
     fn unix_epoch_encodes_correctly() {
         let connection = &mut connection();
         let time = NaiveDate::from_ymd_opt(1970, 1, 1)
@@ -268,7 +263,11 @@ mod tests {
         assert_eq!(Ok(true), query.get_result(connection));
     }
 
-    #[test]
+    // This test decodes query results, which requires reading memory
+    // allocated by the native sqlite library. Miri cannot track the
+    // provenance of that memory when using `-Zmiri-native-lib`.
+    #[cfg(not(miri))]
+    #[diesel_test_helper::test]
     fn unix_epoch_decodes_correctly_in_all_possible_formats() {
         let connection = &mut connection();
         let time = NaiveDate::from_ymd_opt(1970, 1, 1)
@@ -320,13 +319,15 @@ mod tests {
         ];
 
         for s in valid_epoch_formats {
-            let epoch_from_sql =
-                select(sql::<Timestamp>(&format!("'{}'", s))).get_result(connection);
-            assert_eq!(Ok(time), epoch_from_sql, "format {} failed", s);
+            let epoch_from_sql = select(sql::<Timestamp>(&format!("'{s}'"))).get_result(connection);
+            assert_eq!(Ok(time), epoch_from_sql, "format {s} failed");
         }
     }
 
-    #[test]
+    // This test compares against the current time, which Miri cannot read
+    // from the host while isolation is enabled.
+    #[cfg(not(miri))]
+    #[diesel_test_helper::test]
     fn times_relative_to_now_encode_correctly() {
         let connection = &mut connection();
         let time = Utc::now().naive_utc() + Duration::try_seconds(60).unwrap();
@@ -338,7 +339,7 @@ mod tests {
         assert_eq!(Ok(true), query.get_result(connection));
     }
 
-    #[test]
+    #[diesel_test_helper::test]
     fn times_of_day_encode_correctly() {
         let connection = &mut connection();
 
@@ -355,7 +356,11 @@ mod tests {
         assert!(query.get_result::<bool>(connection).unwrap());
     }
 
-    #[test]
+    // This test decodes query results, which requires reading memory
+    // allocated by the native sqlite library. Miri cannot track the
+    // provenance of that memory when using `-Zmiri-native-lib`.
+    #[cfg(not(miri))]
+    #[diesel_test_helper::test]
     fn times_of_day_decode_correctly() {
         let connection = &mut connection();
         let midnight = NaiveTime::from_hms_opt(0, 0, 0).unwrap();
@@ -382,12 +387,11 @@ mod tests {
             "00:00:00.000000-01:00",
         ];
         for format in valid_midnight_formats {
-            let query = select(sql::<Time>(&format!("'{}'", format)));
+            let query = select(sql::<Time>(&format!("'{format}'")));
             assert_eq!(
                 Ok(midnight),
                 query.get_result::<NaiveTime>(connection),
-                "format {} failed",
-                format
+                "format {format} failed"
             );
         }
 
@@ -403,7 +407,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[diesel_test_helper::test]
     fn dates_encode_correctly() {
         let connection = &mut connection();
         let january_first_2000 = NaiveDate::from_ymd_opt(2000, 1, 1).unwrap();
@@ -423,7 +427,11 @@ mod tests {
         assert!(query.get_result::<bool>(connection).unwrap());
     }
 
-    #[test]
+    // This test decodes query results, which requires reading memory
+    // allocated by the native sqlite library. Miri cannot track the
+    // provenance of that memory when using `-Zmiri-native-lib`.
+    #[cfg(not(miri))]
+    #[diesel_test_helper::test]
     fn dates_decode_correctly() {
         let connection = &mut connection();
         let january_first_2000 = NaiveDate::from_ymd_opt(2000, 1, 1).unwrap();
@@ -452,7 +460,11 @@ mod tests {
         );
     }
 
-    #[test]
+    // This test decodes query results, which requires reading memory
+    // allocated by the native sqlite library. Miri cannot track the
+    // provenance of that memory when using `-Zmiri-native-lib`.
+    #[cfg(not(miri))]
+    #[diesel_test_helper::test]
     fn datetimes_decode_correctly() {
         let connection = &mut connection();
         let january_first_2000 = NaiveDate::from_ymd_opt(2000, 1, 1)
@@ -495,7 +507,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[diesel_test_helper::test]
     fn datetimes_encode_correctly() {
         let connection = &mut connection();
         let january_first_2000 = NaiveDate::from_ymd_opt(2000, 1, 1)
@@ -529,7 +541,11 @@ mod tests {
         assert!(query.get_result::<bool>(connection).unwrap());
     }
 
-    #[test]
+    // This test decodes query results, which requires reading memory
+    // allocated by the native sqlite library. Miri cannot track the
+    // provenance of that memory when using `-Zmiri-native-lib`.
+    #[cfg(not(miri))]
+    #[diesel_test_helper::test]
     fn insert_timestamptz_into_table_as_text() {
         crate::table! {
             #[allow(unused_parens)]
@@ -566,7 +582,7 @@ mod tests {
         assert_eq!(result, time);
     }
 
-    #[test]
+    #[diesel_test_helper::test]
     fn can_query_timestamptz_column_with_between() {
         crate::table! {
             #[allow(unused_parens)]
@@ -635,7 +651,7 @@ mod tests {
         assert_eq!(result, Ok(3));
     }
 
-    #[test]
+    #[diesel_test_helper::test]
     fn unix_epoch_encodes_correctly_with_timezone() {
         let connection = &mut connection();
         // West one hour is negative offset
@@ -651,7 +667,7 @@ mod tests {
         assert!(query.get_result::<bool>(connection).unwrap());
     }
 
-    #[test]
+    #[diesel_test_helper::test]
     fn unix_epoch_encodes_correctly_with_utc_timezone() {
         let connection = &mut connection();
         let time: DateTime<Utc> = Utc
@@ -670,7 +686,11 @@ mod tests {
         assert!(query.get_result::<bool>(connection).unwrap());
     }
 
-    #[test]
+    // This test decodes query results, which requires reading memory
+    // allocated by the native sqlite library. Miri cannot track the
+    // provenance of that memory when using `-Zmiri-native-lib`.
+    #[cfg(not(miri))]
+    #[diesel_test_helper::test]
     fn unix_epoch_decodes_correctly_with_utc_timezone_in_all_possible_formats() {
         let connection = &mut connection();
         let time: DateTime<Utc> = Utc.with_ymd_and_hms(1970, 1, 1, 0, 0, 0).single().unwrap();
@@ -696,8 +716,8 @@ mod tests {
 
         for s in valid_epoch_formats {
             let epoch_from_sql =
-                select(sql::<TimestamptzSqlite>(&format!("'{}'", s))).get_result(connection);
-            assert_eq!(Ok(time), epoch_from_sql, "format {} failed", s);
+                select(sql::<TimestamptzSqlite>(&format!("'{s}'"))).get_result(connection);
+            assert_eq!(Ok(time), epoch_from_sql, "format {s} failed");
         }
     }
 }

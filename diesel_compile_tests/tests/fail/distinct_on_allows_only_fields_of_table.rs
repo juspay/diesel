@@ -24,9 +24,11 @@ fn main() {
 
     users::table
         .distinct_on(posts::id)
+        //~^ ERROR: the trait bound `users::table: DistinctOnDsl<posts::columns::id>` is not satisfied
         .get_results(&mut connection);
 
     posts::table
         .distinct_on((posts::name, users::name))
+        //~^ ERROR: the trait bound `table: DistinctOnDsl<(name, name)>` is not satisfied
         .get_result(&mut connection);
 }

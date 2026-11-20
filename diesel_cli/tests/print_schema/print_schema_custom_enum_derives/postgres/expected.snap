@@ -1,0 +1,51 @@
+---
+source: diesel_cli/tests/print_schema.rs
+description: "Test: print_schema_custom_enum_derives"
+---
+// @generated automatically by Diesel CLI.
+
+pub mod sql_types {
+    #[derive(Clone, diesel::query_builder::QueryId, diesel::sql_types::SqlType)]
+    #[diesel(postgres_type(name = "auto_test_frequency"))]
+    #[diesel(enum_type)]
+    pub struct AutoTestFrequency;
+
+    #[derive(Clone, diesel::query_builder::QueryId, diesel::sql_types::SqlType)]
+    #[diesel(postgres_type(name = "auto_test_status"))]
+    #[diesel(enum_type)]
+    pub struct AutoTestStatus;
+}
+
+pub mod rust_types {
+    #[derive(Clone, Copy, Debug, diesel::types::Enum)]
+    #[diesel(sql_type = super::sql_types::AutoTestFrequency)]
+    pub enum AutoTestFrequency {
+        #[diesel(rename = "weekly")]
+        Weekly,
+        #[diesel(rename = "monthly")]
+        Monthly,
+    }
+
+    #[derive(Clone, Copy, Debug, diesel::types::Enum)]
+    #[diesel(sql_type = super::sql_types::AutoTestStatus)]
+    pub enum AutoTestStatus {
+        #[diesel(rename = "pending")]
+        Pending,
+        #[diesel(rename = "faulted")]
+        Faulted,
+        #[diesel(rename = "completed")]
+        Completed,
+    }
+}
+
+diesel::table! {
+    use diesel::sql_types::*;
+    use super::sql_types::AutoTestStatus;
+    use super::sql_types::AutoTestFrequency;
+
+    autotestsetting (id) {
+        id -> Int4,
+        status -> AutoTestStatus,
+        frequency -> AutoTestFrequency,
+    }
+}

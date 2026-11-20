@@ -1,0 +1,92 @@
+error[E0277]: `Filter<WhereClause<Grouped<Eq<name, _>>>>` is no valid SQL fragment for the `Mysql` backend
+    --> tests/fail/aggregate_expressions_disallow_unsupported_features_on_mysql.rs:17:28
+     |
+  LL |         .get_result::<i64>(&mut conn)
+     |          ----------        ^^^^^^^^^ unsatisfied trait bound
+     |          |
+     |          required by a bound introduced by this call
+     |
+     = help: the trait `QueryFragment<Mysql, diesel::internal::derives::multiconnection::sql_dialect::aggregate_function_expressions::NoAggregateFunctionExpressions>` is not implemented for `Filter<WhereClause<Grouped<Eq<name, _>>>>`
+     = note: this usually means that the `Mysql` database system does not support 
+             this SQL syntax
+help: `Filter<P>` implements trait `QueryFragment<DB, SP>`
+    --> ROOT/diesel/src/expression/functions/aggregate_expressions/aggregate_filter.rs
+     |
+  LL | / impl<P, DB> QueryFragment<DB> for Filter<P>
+  LL | | where
+  LL | |     Self: QueryFragment<DB, DB::AggregateFunctionExpressions>,
+  LL | |     DB: Backend,
+     | |________________^ `QueryFragment<DB>`
+...
+  LL | / impl<P, DB>
+  LL | |     QueryFragment<
+  LL | |         DB,
+  LL | |         sql_dialect::aggregate_function_expressions::PostgresLikeAggregateFunctionExpressions,
+...    |
+  LL | |     P: QueryFragment<DB>,
+  LL | |     DB: Backend + SqlDialect<AggregateFunctionExpressions = sql_dialect::aggregate_function_expressions::PostgresLikeAggregateFunctionExpressions>,
+     | |___________________________________________________________________________________________________________________________________________________^ `QueryFragment<DB, _>`
+     = note: required for `Filter<WhereClause<Grouped<Eq<name, _>>>>` to implement `QueryFragment<Mysql>`
+     = note: 4 redundant requirements hidden
+     = note: required for `SelectStatement<FromClause<table>, _>` to implement `QueryFragment<Mysql>`
+     = note: required for `SelectStatement<FromClause<table>, _>` to implement `LoadQuery<'_, MysqlLikeConnection<Mysql>, i64>`
+note: required by a bound in `get_result`
+    --> ROOT/diesel/src/query_dsl/mod.rs
+     |
+LL | pub trait RunQueryDsl<Conn>: Sized {
+...
+LL |     fn get_result<'query, U>(self, conn: &mut Conn) -> QueryResult<U>
+LL |     where
+LL |         Self: LoadQuery<'query, Conn, U>,
+     |               ^^^^^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `RunQueryDsl::get_result`
+  
+     
+error[E0277]: `diesel::internal::sql_functions::Order<columns::name, false>` is no valid SQL fragment for the `Mysql` backend
+    --> tests/fail/aggregate_expressions_disallow_unsupported_features_on_mysql.rs:24:28
+     |
+  LL |         .get_result::<i64>(&mut conn)
+     |          ----------        ^^^^^^^^^ unsatisfied trait bound
+     |          |
+     |          required by a bound introduced by this call
+     |
+     = help: the trait `QueryFragment<Mysql, diesel::internal::derives::multiconnection::sql_dialect::aggregate_function_expressions::NoAggregateFunctionExpressions>` is not implemented for `diesel::internal::sql_functions::Order<columns::name, false>`
+     = note: this usually means that the `Mysql` database system does not support 
+             this SQL syntax
+help: the following other types implement trait `QueryFragment<DB, SP>`
+    --> ROOT/diesel/src/expression/functions/aggregate_expressions/aggregate_order.rs
+     |
+  LL | / impl<E, DB> QueryFragment<DB> for Order<E, false>
+  LL | | where
+  LL | |     Self: QueryFragment<DB, DB::AggregateFunctionExpressions>,
+  LL | |     DB: Backend,
+     | |________________^ `diesel::internal::sql_functions::Order<E, false>` implements `QueryFragment<DB>`
+...
+  LL | / impl<E, DB>
+  LL | |     QueryFragment<
+  LL | |         DB,
+  LL | |         sql_dialect::aggregate_function_expressions::PostgresLikeAggregateFunctionExpres...
+...    |
+  LL | |         AggregateFunctionExpressions = sql_dialect::aggregate_function_expressions::Post...
+  LL | |     >,
+     | |______^ `diesel::internal::sql_functions::Order<E, false>` implements `QueryFragment<DB, _>`
+...
+  LL | / impl<E, DB> QueryFragment<DB> for Order<E, true>
+  LL | | where
+  LL | |     OrderClause<E>: QueryFragment<DB>,
+  LL | |     DB: Backend,
+     | |________________^ `diesel::internal::sql_functions::Order<E, true>` implements `QueryFragment<DB>`
+     = note: required for `diesel::internal::sql_functions::Order<columns::name, false>` to implement `QueryFragment<Mysql>`
+     = note: 4 redundant requirements hidden
+     = note: required for `SelectStatement<FromClause<table>, _>` to implement `QueryFragment<Mysql>`
+     = note: required for `SelectStatement<FromClause<table>, _>` to implement `LoadQuery<'_, MysqlLikeConnection<Mysql>, i64>`
+note: required by a bound in `get_result`
+    --> ROOT/diesel/src/query_dsl/mod.rs
+     |
+LL | pub trait RunQueryDsl<Conn>: Sized {
+...
+LL |     fn get_result<'query, U>(self, conn: &mut Conn) -> QueryResult<U>
+LL |     where
+LL |         Self: LoadQuery<'query, Conn, U>,
+     |               ^^^^^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `RunQueryDsl::get_result`
+  
+     For more information about this error, try `rustc --explain E0277`.

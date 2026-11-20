@@ -2,9 +2,9 @@
 
 use crate::backend::Backend;
 use crate::deserialize;
+use core::default::Default;
+use core::ops::Range;
 use deserialize::FromSql;
-use std::default::Default;
-use std::ops::Range;
 
 #[cfg(feature = "i-implement-a-third-party-backend-and-opt-into-breaking-changes")]
 #[doc(inline)]
@@ -22,7 +22,6 @@ pub(crate) use self::private::{PartialRow, RowSealed};
 ///
 /// * Crates implementing custom backends need to provide `RowIndex<usize>` and
 ///   `RowIndex<&str>` impls for their [`Row`] type.
-///
 pub trait RowIndex<I> {
     /// Get the numeric index inside the current row for the provided index value
     fn idx(&self, idx: I) -> Option<usize>;
@@ -143,7 +142,7 @@ where
         T: FromSql<ST, DB>,
     {
         let field = Row::get(self, column_name)
-            .ok_or_else(|| format!("Column `{column_name}` was not present in query"))?;
+            .ok_or_else(|| alloc::format!("Column `{column_name}` was not present in query"))?;
 
         T::from_nullable_sql(field.value())
     }
@@ -174,7 +173,7 @@ pub(crate) mod private {
 
     /// This trait restricts who can implement `Row`
     #[cfg_attr(
-        docsrs,
+        diesel_docsrs,
         doc(cfg(feature = "i-implement-a-third-party-backend-and-opt-into-breaking-changes"))
     )]
     pub trait RowSealed {}
@@ -208,8 +207,8 @@ pub(crate) mod private {
             R: Row<'b, DB>,
             DB: Backend,
         {
-            let range_lower = std::cmp::min(range.start, inner.field_count());
-            let range_upper = std::cmp::min(range.end, inner.field_count());
+            let range_lower = core::cmp::min(range.start, inner.field_count());
+            let range_upper = core::cmp::min(range.end, inner.field_count());
             Self {
                 inner,
                 range: range_lower..range_upper,
@@ -246,7 +245,7 @@ pub(crate) mod private {
         }
 
         fn partial_row(&self, range: Range<usize>) -> PartialRow<'_, R> {
-            let range_upper_bound = std::cmp::min(self.range.end, self.range.start + range.end);
+            let range_upper_bound = core::cmp::min(self.range.end, self.range.start + range.end);
             let range = (self.range.start + range.start)..range_upper_bound;
             PartialRow {
                 inner: self.inner,

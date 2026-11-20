@@ -1,9 +1,15 @@
 //! Types related to database connections
 
+mod database_version;
 pub(crate) mod instrumentation;
 #[cfg(all(
     not(feature = "i-implement-a-third-party-backend-and-opt-into-breaking-changes"),
-    any(feature = "sqlite", feature = "postgres", feature = "mysql")
+    any(
+        feature = "__sqlite-shared",
+        feature = "postgres",
+        feature = "mysql",
+        feature = "mariadb"
+    )
 ))]
 pub(crate) mod statement_cache;
 #[cfg(feature = "i-implement-a-third-party-backend-and-opt-into-breaking-changes")]
@@ -15,12 +21,16 @@ use crate::expression::QueryMetadata;
 use crate::query_builder::{Query, QueryFragment, QueryId};
 use crate::result::*;
 use crate::sql_types::TypeMetadata;
-use std::fmt::Debug;
+use core::fmt::Debug;
 
 #[doc(inline)]
+pub use self::database_version::{DatabaseVersion, ParseDatabaseVersionError};
+#[cfg(feature = "std")]
+#[doc(inline)]
+pub use self::instrumentation::set_default_instrumentation;
+#[doc(inline)]
 pub use self::instrumentation::{
-    get_default_instrumentation, set_default_instrumentation, DebugQuery, Instrumentation,
-    InstrumentationEvent,
+    DebugQuery, Instrumentation, InstrumentationEvent, get_default_instrumentation,
 };
 #[doc(inline)]
 pub use self::transaction_manager::{
@@ -41,7 +51,12 @@ pub use self::instrumentation::{DynInstrumentation, StrQueryHelper};
 
 #[cfg(all(
     not(feature = "i-implement-a-third-party-backend-and-opt-into-breaking-changes"),
-    any(feature = "sqlite", feature = "postgres", feature = "mysql")
+    any(
+        feature = "__sqlite-shared",
+        feature = "postgres",
+        feature = "mysql",
+        feature = "mariadb"
+    )
 ))]
 pub(crate) use self::private::MultiConnectionHelper;
 
@@ -274,6 +289,11 @@ where
     /// # include!("../doctest_setup.rs");
     /// use diesel::result::Error;
     ///
+    /// # // Reading the query result requires reading memory allocated by the
+    /// # // native sqlite library, which miri cannot track provenance for.
+    /// # #[cfg(miri)]
+    /// # fn main() {}
+    /// # #[cfg(not(miri))]
     /// # fn main() {
     /// #     run_test().unwrap();
     /// # }
@@ -346,6 +366,11 @@ where
     /// # include!("../doctest_setup.rs");
     /// use diesel::result::Error;
     ///
+    /// # // Reading the query result requires reading memory allocated by the
+    /// # // native sqlite library, which miri cannot track provenance for.
+    /// # #[cfg(miri)]
+    /// # fn main() {}
+    /// # #[cfg(not(miri))]
     /// # fn main() {
     /// #     run_test().unwrap();
     /// # }
@@ -377,10 +402,12 @@ where
     {
         let mut user_result = None;
         let _ = self.transaction::<(), _, _>(|conn| {
-            user_result = f(conn).ok();
+            user_result = Some(f(conn));
             Err(Error::RollbackTransaction)
         });
-        user_result.expect("Transaction did not succeed")
+        user_result
+            .expect("Transaction never executed")
+            .unwrap_or_else(|e| panic!("Transaction did not succeed: {:?}", e))
     }
 
     /// Execute a single SQL statements given by a query and return
@@ -475,26 +502,26 @@ pub trait WithMetadataLookup: Connection {
 /// this trait won't help you much. Normally you should only
 /// need to use this trait if you are interacting with a connection
 /// passed to a [`Migration`](../migration/trait.Migration.html)
-pub trait BoxableConnection<DB: Backend>: SimpleConnection + std::any::Any {
+pub trait BoxableConnection<DB: Backend>: SimpleConnection + core::any::Any {
     /// Maps the current connection to `std::any::Any`
     #[diesel_derives::__diesel_public_if(
         feature = "i-implement-a-third-party-backend-and-opt-into-breaking-changes"
     )]
-    fn as_any(&self) -> &dyn std::any::Any;
+    fn as_any(&self) -> &dyn core::any::Any;
 
     #[doc(hidden)]
-    fn as_any_mut(&mut self) -> &mut dyn std::any::Any;
+    fn as_any_mut(&mut self) -> &mut dyn core::any::Any;
 }
 
 impl<C> BoxableConnection<C::Backend> for C
 where
-    C: Connection + std::any::Any,
+    C: Connection + core::any::Any,
 {
-    fn as_any(&self) -> &dyn std::any::Any {
+    fn as_any(&self) -> &dyn core::any::Any {
         self
     }
 
-    fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
+    fn as_any_mut(&mut self) -> &mut dyn core::any::Any {
         self
     }
 }
@@ -563,7 +590,7 @@ pub(crate) mod private {
 
     /// This trait restricts who can implement `Connection`
     #[cfg_attr(
-        docsrs,
+        diesel_docsrs,
         doc(cfg(feature = "i-implement-a-third-party-backend-and-opt-into-breaking-changes"))
     )]
     pub trait ConnectionSealed {}
@@ -572,18 +599,18 @@ pub(crate) mod private {
     /// to/from an `std::any::Any` reference. This is used internally by the `#[derive(MultiConnection)]`
     /// implementation
     #[cfg_attr(
-        docsrs,
+        diesel_docsrs,
         doc(cfg(feature = "i-implement-a-third-party-backend-and-opt-into-breaking-changes"))
     )]
     pub trait MultiConnectionHelper: super::Connection {
         /// Convert the lookup type to any
         fn to_any<'a>(
             lookup: &mut <Self::Backend as crate::sql_types::TypeMetadata>::MetadataLookup,
-        ) -> &mut (dyn std::any::Any + 'a);
+        ) -> &mut (dyn core::any::Any + 'a);
 
         /// Get the lookup type from any
         fn from_any(
-            lookup: &mut dyn std::any::Any,
+            lookup: &mut dyn core::any::Any,
         ) -> Option<&mut <Self::Backend as crate::sql_types::TypeMetadata>::MetadataLookup>;
     }
 

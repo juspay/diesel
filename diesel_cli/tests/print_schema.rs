@@ -2,6 +2,7 @@
 use std::fs::File;
 use std::io::prelude::*;
 use std::path::{Path, PathBuf};
+use std::process::Command;
 
 use crate::support::{database, project};
 
@@ -13,9 +14,10 @@ fn run_infer_schema_without_docs() {
 #[test]
 #[cfg(feature = "postgres")]
 fn run_except_custom_type_definitions() {
-    test_print_schema(
+    test_print_schema_with_options(
         "print_schema_except_custom_type_definitions",
         vec!["--except-custom-type-definitions", "MyType2"],
+        false, // we exclude a certain required type
     );
 }
 
@@ -46,6 +48,20 @@ fn run_infer_schema_django_bool_case() {
     test_print_schema(
         "print_schema_django_bool",
         vec!["--with-docs", "-o", "users1"],
+    );
+}
+
+#[test]
+#[cfg(feature = "postgres")]
+fn run_infer_schema_domain_types_case() {
+    test_print_schema(
+        "print_schema_domain_types",
+        vec![
+            "--pg-domains-as-custom-types",
+            "int",
+            "--pg-domains-as-custom-types",
+            "longtext",
+        ],
     );
 }
 
@@ -137,15 +153,21 @@ fn print_schema_type_renaming() {
 }
 
 #[test]
-#[cfg(feature = "mysql")]
+#[cfg(any(feature = "mysql", feature = "mariadb"))]
 fn print_schema_unsigned() {
     test_print_schema("print_schema_unsigned", vec!["--with-docs"]);
 }
 
 #[test]
-#[cfg(feature = "mysql")]
+#[cfg(any(feature = "mysql", feature = "mariadb"))]
 fn print_schema_datetime_for_mysql() {
     test_print_schema("print_schema_datetime_for_mysql", vec!["--with-docs"]);
+}
+
+#[test]
+#[cfg(any(feature = "mysql", feature = "mariadb"))]
+fn print_schema_auto_increment() {
+    test_print_schema("print_schema_auto_increment", Vec::new());
 }
 
 #[test]
@@ -158,9 +180,11 @@ fn print_schema_patch_file() {
 
 #[test]
 fn print_schema_custom_types() {
-    test_print_schema(
+    test_print_schema_with_options(
         "print_schema_custom_types",
         vec!["--import-types", "foo::*", "--import-types", "bar::*"],
+        // these modules don't exist so it's not meaningful to check if this compiles
+        false,
     );
 }
 
@@ -178,6 +202,26 @@ fn print_schema_custom_types_custom_schema() {
             "Clone",
         ],
     );
+}
+
+#[test]
+#[cfg(feature = "postgres")]
+fn print_schema_custom_enum_derives() {
+    test_print_schema(
+        "print_schema_custom_enum_derives",
+        vec![
+            "--custom-enum-derives",
+            "Clone",
+            "--custom-enum-derives",
+            "Copy",
+        ],
+    );
+}
+
+#[test]
+#[cfg(any(feature = "postgres", feature = "mysql", feature = "mariadb"))]
+fn print_schema_with_unmappable_enum_names() {
+    test_print_schema("print_schema_with_unmappable_enum_names", vec![]);
 }
 
 #[test]
@@ -215,9 +259,19 @@ fn schema_file_is_relative_to_project_root() {
 #[test]
 #[cfg(feature = "postgres")]
 fn print_schema_disabling_custom_type_works() {
-    test_print_schema(
+    test_print_schema_with_options(
         "print_schema_disabling_custom_type_works",
         vec!["--no-generate-missing-sql-type-definitions"],
+        false, // explicitly exclude required types
+    )
+}
+
+#[test]
+#[cfg(feature = "postgres")]
+fn print_schema_disabling_enum_types_works() {
+    test_print_schema(
+        "print_schema_disabling_enum_types_works",
+        vec!["--no-generate-rust-enum-types"],
     )
 }
 
@@ -315,7 +369,7 @@ fn print_schema_respects_type_name_case() {
 }
 
 #[test]
-#[cfg(any(feature = "postgres", feature = "mysql"))]
+#[cfg(any(feature = "postgres", feature = "mysql", feature = "mariadb"))]
 fn print_schema_comments_fallback_on_generated() {
     test_print_schema(
         "print_schema_comments_fallback_on_generated",
@@ -324,7 +378,7 @@ fn print_schema_comments_fallback_on_generated() {
 }
 
 #[test]
-#[cfg(any(feature = "postgres", feature = "mysql"))]
+#[cfg(any(feature = "postgres", feature = "mysql", feature = "mariadb"))]
 fn print_schema_with_enum_set_types() {
     test_print_schema(
         "print_schema_with_enum_set_types",
@@ -339,7 +393,7 @@ fn print_schema_with_enum_set_types() {
 }
 
 #[test]
-#[cfg(any(feature = "postgres", feature = "mysql"))]
+#[cfg(any(feature = "postgres", feature = "mysql", feature = "mariadb"))]
 fn print_schema_comments_dont_fallback_on_generated() {
     test_print_schema(
         "print_schema_comments_dont_fallback_on_generated",
@@ -348,8 +402,53 @@ fn print_schema_comments_dont_fallback_on_generated() {
 }
 
 #[test]
+#[cfg(feature = "postgres")]
+fn print_schema_type_comments_fallback() {
+    test_print_schema("print_schema_type_comments_fallback", vec!["--with-docs"])
+}
+
+#[test]
+#[cfg(feature = "postgres")]
+fn print_schema_type_comments_only_database() {
+    test_print_schema(
+        "print_schema_type_comments_only_database",
+        vec!["--with-docs-config", "only-database-comments"],
+    )
+}
+
+#[test]
+#[cfg(feature = "postgres")]
+fn print_schema_type_comments_no_docs() {
+    test_print_schema("print_schema_type_comments_no_docs", vec![])
+}
+
+#[test]
+fn print_schema_fk_related_tables() {
+    test_print_schema(
+        "print_schema_fk_related_tables",
+        vec![
+            "--allow-tables-to-appear-in-same-query-config",
+            "fk_related_tables",
+        ],
+    )
+}
+
+#[test]
+fn print_schema_allows_none() {
+    test_print_schema(
+        "print_schema_allows_none",
+        vec!["--allow-tables-to-appear-in-same-query-config", "none"],
+    )
+}
+
+#[test]
 fn print_schema_reserved_names() {
     test_print_schema("print_schema_reserved_name_mitigation_issue_3404", vec![])
+}
+
+#[test]
+fn print_schema_column_named_table() {
+    test_print_schema("print_schema_column_named_table", vec![])
 }
 
 #[test]
@@ -407,12 +506,213 @@ fn print_schema_with_multiple_schema() {
     )
 }
 
+#[test]
+#[cfg(feature = "postgres")]
+fn print_schema_with_multiple_schema_cross_schema_foreign_key() {
+    test_multiple_print_schema(
+        "print_schema_with_multiple_schema_cross_schema_foreign_key",
+        vec![
+            "--schema-key",
+            "user1",
+            "--schema",
+            "game",
+            "--with-docs",
+            "--schema-key",
+            "user2",
+            "--schema",
+            "people",
+            "--with-docs",
+        ],
+    )
+}
+
+#[test]
+#[cfg(feature = "postgres")]
+fn print_schema_with_same_schema_cross_file_foreign_key() {
+    test_multiple_print_schema(
+        "print_schema_with_same_schema_cross_file_foreign_key",
+        vec![
+            "--schema-key",
+            "user1",
+            "--schema",
+            "inventory",
+            "-o",
+            "orders",
+            "--with-docs",
+            "--schema-key",
+            "user2",
+            "--schema",
+            "inventory",
+            "-o",
+            "customers",
+            "--with-docs",
+        ],
+    )
+}
+
+#[test]
+#[cfg(feature = "postgres")]
+fn print_schema_with_default_schema_cross_file_foreign_key() {
+    test_multiple_print_schema(
+        "print_schema_with_default_schema_cross_file_foreign_key",
+        vec![
+            "--schema-key",
+            "user1",
+            "-o",
+            "orders",
+            "--with-docs",
+            "--schema-key",
+            "user2",
+            "-o",
+            "customers",
+            "--with-docs",
+        ],
+    )
+}
+
+#[test]
+#[cfg(feature = "sqlite")]
+fn print_schema_sqlite_primary_key_as_bigint() {
+    test_print_schema(
+        "print_schema_sqlite_primary_key_as_bigint",
+        vec!["--sqlite-integer-primary-key-is-bigint"],
+    );
+}
+
+#[test]
+fn print_schema_with_view() {
+    test_print_schema(
+        "print_schema_with_view",
+        vec!["--include-views", "--with-docs"],
+    );
+}
+
+#[test]
+fn print_schema_view_infer_nullable_simple() {
+    test_print_schema(
+        "print_schema_view_infer_nullable_simple",
+        vec!["--include-views", "--experimental-infer-nullable-for-views"],
+    )
+}
+
+#[test]
+#[cfg(feature = "sqlite")]
+fn print_schema_view_infer_nullable_resolution_failure() {
+    test_print_schema(
+        "print_schema_view_infer_nullable_resolution_failure",
+        vec!["--include-views", "--experimental-infer-nullable-for-views"],
+    );
+}
+
+#[test]
+fn print_schema_view_infer_nullable_from_table() {
+    test_print_schema(
+        "print_schema_view_infer_nullable_from_table",
+        vec!["--include-views", "--experimental-infer-nullable-for-views"],
+    );
+}
+
+#[test]
+fn print_schema_view_infer_nullable_from_table_only_view() {
+    test_print_schema(
+        "print_schema_view_infer_nullable_only_view",
+        vec![
+            "--include-views",
+            "--experimental-infer-nullable-for-views",
+            "-o",
+            "test",
+        ],
+    )
+}
+
+#[test]
+fn print_schema_view_infer_nullable_left_join() {
+    test_print_schema(
+        "print_schema_view_infer_nullable_left_join",
+        vec!["--include-views", "--experimental-infer-nullable-for-views"],
+    )
+}
+
+#[test]
+#[cfg(feature = "postgres")]
+fn print_schema_view_infer_nullable_mixed_schema() {
+    test_print_schema(
+        "print_schema_view_infer_nullable_mixed_schema",
+        vec!["--include-views", "--experimental-infer-nullable-for-views"],
+    )
+}
+
+#[test]
+#[cfg(feature = "postgres")]
+fn print_schema_with_materialized_view() {
+    test_print_schema(
+        "print_schema_with_materialized_view",
+        vec!["--include-views", "--with-docs"],
+    );
+}
+
+#[test]
+#[cfg(feature = "postgres")]
+fn print_schema_materialized_view_infer_nullable() {
+    test_print_schema(
+        "print_schema_materialized_view_infer_nullable",
+        vec!["--include-views", "--experimental-infer-nullable-for-views"],
+    );
+}
+
+#[test]
+#[cfg(feature = "sqlite")]
+fn print_schema_table_name_injecetion() {
+    test_print_schema("print_schema_table_name_injection", vec![])
+}
+
+// seems like it uses lowercase table names there
+// for postgres insta seems to struggle on windows
+#[cfg(not(all(
+    any(feature = "mariadb", feature = "mysql", feature = "postgres"),
+    windows
+)))]
+#[test]
+fn print_schema_rust_injection() {
+    test_print_schema(
+        "print_schema_rust_injection",
+        vec![
+            "--custom-type-derives",
+            "diesel::query_builder::QueryId",
+            "--custom-type-derives",
+            "Clone",
+            "--with-docs",
+        ],
+    );
+}
+
+#[cfg(all(feature = "postgres", not(windows)))]
+#[test]
+fn print_schema_rust_injection_schema() {
+    test_print_schema(
+        "print_schema_rust_injection_schema",
+        vec![
+            "--custom-type-derives",
+            "diesel::query_builder::QueryId",
+            "--custom-type-derives",
+            "Clone",
+            "--with-docs",
+            "--schema",
+            r#"x."
+include!(env!("SCHEMA")); mod y
+"#,
+        ],
+    )
+}
+
 #[cfg(feature = "sqlite")]
 const BACKEND: &str = "sqlite";
 #[cfg(feature = "postgres")]
 const BACKEND: &str = "postgres";
 #[cfg(feature = "mysql")]
 const BACKEND: &str = "mysql";
+#[cfg(feature = "mariadb")]
+const BACKEND: &str = "mariadb";
 
 fn backend_file_path(test_name: &str, file: &str) -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -462,7 +762,13 @@ fn test_multiple_print_schema(test_name: &str, args: Vec<&str>) {
     });
 }
 
+#[track_caller]
 fn test_print_schema(test_name: &str, args: Vec<&str>) {
+    test_print_schema_with_options(test_name, args, true);
+}
+
+#[track_caller]
+fn test_print_schema_with_options(test_name: &str, args: Vec<&str>, check_compile: bool) {
     let test_path = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("tests")
         .join("print_schema")
@@ -490,11 +796,15 @@ fn test_print_schema(test_name: &str, args: Vec<&str>) {
     setting.bind(|| {
         insta::assert_snapshot!("expected", result);
 
-        test_print_schema_config(test_name, &test_path, schema);
+        test_print_schema_config(test_name, &test_path, &schema);
     });
+    if check_compile {
+        assert_schema_compiles(test_name, result);
+    }
 }
 
-fn test_print_schema_config(test_name: &str, test_path: &Path, schema: String) {
+#[track_caller]
+fn test_print_schema_config(test_name: &str, test_path: &Path, schema: &str) {
     let config = read_file(&test_path.join("diesel.toml"));
     let mut p = project(&format!("{}_config", test_name)).file("diesel.toml", &config);
 
@@ -507,7 +817,7 @@ fn test_print_schema_config(test_name: &str, test_path: &Path, schema: String) {
     let p = p.build();
 
     p.command("setup").run();
-    p.create_migration("12345_create_schema", &schema, None, None);
+    p.create_migration("12345_create_schema", schema, None, None);
     let result = p.command("migration").arg("run").run();
     assert!(result.is_success(), "Result was unsuccessful {:?}", result);
 
@@ -522,8 +832,89 @@ fn test_print_schema_config(test_name: &str, test_path: &Path, schema: String) {
     insta::assert_snapshot!("expected", result);
 }
 
+#[track_caller]
+fn assert_schema_compiles(test_name: &str, schema: String) {
+    let temp_dir = tempfile::TempDir::with_prefix(format!("{test_name}_")).unwrap();
+    let res = Command::new("cargo")
+        .arg("init")
+        .arg(format!("--name={test_name}"))
+        .arg(temp_dir.path())
+        .status()
+        .unwrap();
+    assert!(res.success());
+    let schema_rs = temp_dir.path().join("src/schema.rs");
+    std::fs::write(schema_rs, schema).unwrap();
+    let main_rs = temp_dir.path().join("src/main.rs");
+    std::fs::write(main_rs, "mod schema;\n fn main() {}").unwrap();
+    let target_dir = std::env::var("CARGO_TARGET_DIR")
+        .unwrap_or_else(|_| env!("CARGO_TARGET_TMPDIR").to_string());
+    let diesel_path = env!("CARGO_MANIFEST_DIR");
+
+    let mut add_command = Command::new("cargo");
+
+    add_command
+        .arg("add")
+        .arg("--offline")
+        .arg(format!("--path={diesel_path}/../diesel"))
+        .arg(format!(
+            "--manifest-path={}/Cargo.toml",
+            temp_dir.path().display()
+        ))
+        .arg("--no-default-features");
+
+    if cfg!(feature = "sqlite") {
+        add_command.arg("-F").arg("sqlite");
+    }
+    if cfg!(feature = "mysql") {
+        add_command.arg("-F").arg("mysql");
+    }
+    if cfg!(feature = "mariadb") {
+        add_command.arg("-F").arg("mariadb");
+    }
+    if cfg!(feature = "postgres") {
+        add_command.arg("-F").arg("postgres");
+    }
+    let res = add_command.status().unwrap();
+    assert!(res.success());
+
+    let check = Command::new("cargo")
+        .arg("check")
+        .arg(format!(
+            "--manifest-path={}/Cargo.toml",
+            temp_dir.path().display()
+        ))
+        .arg(format!("--target-dir={target_dir}"))
+        .arg("--offline")
+        .env_remove("RUSTFLAGS")
+        .output();
+
+    #[allow(clippy::print_stdout)]
+    match check {
+        Err(err) => panic!("Failed to compile test schema: {err}"),
+        Ok(o) if !o.status.success() => {
+            let p = temp_dir.keep();
+            println!("Test project: {}", p.display());
+            panic!(
+                "Failed to compile test schema: \n STDERR: \n{}\n STDOUT: \n {}",
+                String::from_utf8_lossy(&o.stderr),
+                String::from_utf8_lossy(&o.stdout)
+            );
+        }
+        _ => {}
+    }
+}
+
 fn test_multiple_print_schema_config(test_name: &str, test_path: &Path, schema: String) {
     let config = read_file(&test_path.join("diesel.toml"));
+    // prevent name collisions by shorting the original name
+    // Postgres allows database names up to 63 bytes, "_config` is 7 bytes
+    // The project builder also appends another 7 bytes by adding "diesel_"
+    // which gives us a max name length of 49
+    let test_name = if test_name.len() >= 49 {
+        &test_name[..49]
+    } else {
+        test_name
+    };
     let mut p = project(&format!("{}_config", test_name)).file("diesel.toml", &config);
 
     let patch_file = backend_file_path(test_name, "schema.patch");

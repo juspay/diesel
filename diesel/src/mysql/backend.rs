@@ -1,65 +1,23 @@
 //! The MySQL backend
 
-use super::query_builder::MysqlQueryBuilder;
+use super::MysqlQueryBuilder;
 use super::MysqlValue;
-use crate::backend::sql_dialect::on_conflict_clause::SupportsOnConflictClause;
 use crate::backend::*;
+use crate::internal::derives::multiconnection::sql_dialect;
+use crate::mysql_like::MysqlType;
+use crate::mysql_like::query_fragments::MySqlLikeBatchUpdateSupport;
+use crate::mysql_like::query_fragments::{
+    MysqlConcatClause, MysqlOnConflictClause, MysqlRequiresOrderForWindowFunctions,
+    MysqlStyleDefaultValueClause,
+};
+use crate::mysql_like::{MapErrorNumber, MysqlLikeBackend};
 use crate::query_builder::bind_collector::RawBytesBindCollector;
+use crate::result::DatabaseErrorKind;
 use crate::sql_types::TypeMetadata;
 
 /// The MySQL backend
 #[derive(Debug, Copy, Clone, Hash, PartialEq, Eq, Default)]
 pub struct Mysql;
-
-#[allow(missing_debug_implementations)]
-/// Represents possible types, that can be transmitted as via the
-/// Mysql wire protocol
-#[derive(Debug, Hash, PartialEq, Eq, Clone, Copy)]
-#[non_exhaustive]
-pub enum MysqlType {
-    /// A 8 bit signed integer
-    Tiny,
-    /// A 8 bit unsigned integer
-    UnsignedTiny,
-    /// A 16 bit signed integer
-    Short,
-    /// A 16 bit unsigned integer
-    UnsignedShort,
-    /// A 32 bit signed integer
-    Long,
-    /// A 32 bit unsigned integer
-    UnsignedLong,
-    /// A 64 bit signed integer
-    LongLong,
-    /// A 64 bit unsigned integer
-    UnsignedLongLong,
-    /// A 32 bit floating point number
-    Float,
-    /// A 64 bit floating point number
-    Double,
-    /// A fixed point decimal value
-    Numeric,
-    /// A datatype to store a time value
-    Time,
-    /// A datatype to store a date value
-    Date,
-    /// A datatype containing timestamp values ranging from
-    /// '1000-01-01 00:00:00' to '9999-12-31 23:59:59'.
-    DateTime,
-    /// A datatype containing timestamp values ranging from
-    /// 1970-01-01 00:00:01' UTC to '2038-01-19 03:14:07' UTC.
-    Timestamp,
-    /// A datatype for string values
-    String,
-    /// A datatype containing binary large objects
-    Blob,
-    /// A value containing a set of bit's
-    Bit,
-    /// A user defined set type
-    Set,
-    /// A user defined enum type
-    Enum,
-}
 
 impl Backend for Mysql {
     type QueryBuilder = MysqlQueryBuilder;
@@ -81,6 +39,8 @@ impl SqlDialect for Mysql {
     type BatchInsertSupport = sql_dialect::batch_insert_support::PostgresLikeBatchInsertSupport;
     type DefaultValueClauseForInsert = MysqlStyleDefaultValueClause;
 
+    type BatchUpdateSupport = MySqlLikeBatchUpdateSupport;
+
     type EmptyFromClauseSyntax = sql_dialect::from_clause_syntax::AnsiSqlFromClauseSyntax;
     type SelectStatementSyntax = sql_dialect::select_statement_syntax::AnsiSqlSelectStatement;
 
@@ -89,18 +49,43 @@ impl SqlDialect for Mysql {
 
     type ConcatClause = MysqlConcatClause;
     type AliasSyntax = sql_dialect::alias_syntax::AsAliasSyntax;
+
+    type WindowFrameClauseGroupSupport =
+        sql_dialect::window_frame_clause_group_support::NoGroupWindowFrameUnit;
+
+    type WindowFrameExclusionSupport =
+        sql_dialect::window_frame_exclusion_support::NoFrameFrameExclusionSupport;
+
+    type AggregateFunctionExpressions =
+        sql_dialect::aggregate_function_expressions::NoAggregateFunctionExpressions;
+
+    type BuiltInWindowFunctionRequireOrder = MysqlRequiresOrderForWindowFunctions;
+
+    type SqlFunctionParameterNotation =
+        sql_dialect::sql_function_parameter_notation::PositionalNotationOnly;
 }
 
 impl DieselReserveSpecialization for Mysql {}
 impl TrustedBackend for Mysql {}
 
-#[derive(Debug, Clone, Copy)]
-pub struct MysqlStyleDefaultValueClause;
+impl MysqlLikeBackend for Mysql {
+    const SCHEME: &'static str = "mysql";
+}
 
-#[derive(Debug, Clone, Copy)]
-pub struct MysqlConcatClause;
-
-#[derive(Debug, Clone, Copy)]
-pub struct MysqlOnConflictClause;
-
-impl SupportsOnConflictClause for MysqlOnConflictClause {}
+impl MapErrorNumber for Mysql {
+    fn map_error_number(error_number: u32) -> crate::result::DatabaseErrorKind {
+        // These values are not exposed by the C API, but are documented
+        // at https://dev.mysql.com/doc/refman/8.0/en/server-error-reference.html
+        // and are from the ANSI SQLSTATE standard
+        match error_number {
+            1062 | 1586 | 1859 => DatabaseErrorKind::UniqueViolation,
+            1216 | 1217 | 1451 | 1452 | 1830 | 1834 => DatabaseErrorKind::ForeignKeyViolation,
+            1792 => DatabaseErrorKind::ReadOnlyTransaction,
+            1048 | 1364 => DatabaseErrorKind::NotNullViolation,
+            3819 => DatabaseErrorKind::CheckViolation,
+            1213 => DatabaseErrorKind::SerializationFailure,
+            1390 => DatabaseErrorKind::UnableToSendCommand,
+            _ => DatabaseErrorKind::Unknown,
+        }
+    }
+}

@@ -20,6 +20,7 @@ mod ord;
 pub use self::fold::Foldable;
 pub use self::ord::SqlOrd;
 
+use crate::backend::Backend;
 use crate::expression::TypedExpressionType;
 use crate::query_builder::QueryId;
 
@@ -41,6 +42,7 @@ use crate::query_builder::QueryId;
 #[diesel(postgres_type(oid = 16, array_oid = 1000))]
 #[diesel(sqlite_type(name = "Integer"))]
 #[diesel(mysql_type(name = "Tiny"))]
+#[diesel(mariadb_type(name = "Tiny"))]
 pub struct Bool;
 
 /// The tiny integer SQL type.
@@ -60,6 +62,7 @@ pub struct Bool;
 /// [i8]: https://doc.rust-lang.org/nightly/std/primitive.i8.html
 #[derive(Debug, Clone, Copy, Default, QueryId, SqlType)]
 #[diesel(mysql_type(name = "Tiny"))]
+#[diesel(mariadb_type(name = "Tiny"))]
 pub struct TinyInt;
 #[doc(hidden)]
 pub type Tinyint = TinyInt;
@@ -79,6 +82,7 @@ pub type Tinyint = TinyInt;
 #[diesel(postgres_type(oid = 21, array_oid = 1005))]
 #[diesel(sqlite_type(name = "SmallInt"))]
 #[diesel(mysql_type(name = "Short"))]
+#[diesel(mariadb_type(name = "Short"))]
 pub struct SmallInt;
 #[doc(hidden)]
 pub type Int2 = SmallInt;
@@ -100,6 +104,7 @@ pub type Smallint = SmallInt;
 #[diesel(postgres_type(oid = 23, array_oid = 1007))]
 #[diesel(sqlite_type(name = "Integer"))]
 #[diesel(mysql_type(name = "Long"))]
+#[diesel(mariadb_type(name = "Long"))]
 pub struct Integer;
 #[doc(hidden)]
 pub type Int4 = Integer;
@@ -119,6 +124,7 @@ pub type Int4 = Integer;
 #[diesel(postgres_type(oid = 20, array_oid = 1016))]
 #[diesel(sqlite_type(name = "Long"))]
 #[diesel(mysql_type(name = "LongLong"))]
+#[diesel(mariadb_type(name = "LongLong"))]
 pub struct BigInt;
 #[doc(hidden)]
 pub type Int8 = BigInt;
@@ -140,6 +146,7 @@ pub type Bigint = BigInt;
 #[diesel(postgres_type(oid = 700, array_oid = 1021))]
 #[diesel(sqlite_type(name = "Float"))]
 #[diesel(mysql_type(name = "Float"))]
+#[diesel(mariadb_type(name = "Float"))]
 pub struct Float;
 #[doc(hidden)]
 pub type Float4 = Float;
@@ -159,6 +166,7 @@ pub type Float4 = Float;
 #[diesel(postgres_type(oid = 701, array_oid = 1022))]
 #[diesel(sqlite_type(name = "Double"))]
 #[diesel(mysql_type(name = "Double"))]
+#[diesel(mariadb_type(name = "Double"))]
 pub struct Double;
 #[doc(hidden)]
 pub type Float8 = Double;
@@ -180,6 +188,7 @@ pub type Float8 = Double;
 #[derive(Debug, Clone, Copy, Default, QueryId, SqlType)]
 #[diesel(postgres_type(oid = 1700, array_oid = 1231))]
 #[diesel(mysql_type(name = "Numeric"))]
+#[diesel(mariadb_type(name = "Numeric"))]
 #[diesel(sqlite_type(name = "Double"))]
 pub struct Numeric;
 
@@ -208,6 +217,7 @@ pub type Decimal = Numeric;
 #[diesel(postgres_type(oid = 25, array_oid = 1009))]
 #[diesel(sqlite_type(name = "Text"))]
 #[diesel(mysql_type(name = "String"))]
+#[diesel(mariadb_type(name = "String"))]
 pub struct Text;
 
 /// The SQL `VARCHAR` type
@@ -251,6 +261,7 @@ pub type Longtext = Text;
 #[diesel(postgres_type(oid = 17, array_oid = 1001))]
 #[diesel(sqlite_type(name = "Binary"))]
 #[diesel(mysql_type(name = "Blob"))]
+#[diesel(mariadb_type(name = "Blob"))]
 pub struct Binary;
 
 #[doc(hidden)]
@@ -284,6 +295,7 @@ pub type Bit = Binary;
 #[diesel(postgres_type(oid = 1082, array_oid = 1182))]
 #[diesel(sqlite_type(name = "Text"))]
 #[diesel(mysql_type(name = "Date"))]
+#[diesel(mariadb_type(name = "Date"))]
 pub struct Date;
 
 /// The interval SQL type.
@@ -299,8 +311,8 @@ pub struct Date;
 ///
 /// - [`PgInterval`] which can be constructed using [`IntervalDsl`]
 /// - [`chrono::Duration`][Duration] with `feature = "chrono"`
-///     (There might be some information loss due to special behavior for literal `month` (or longer) intervals;
-///      Please read official documentation of [PostgreSQL Interval].)
+///   (There might be some information loss due to special behavior for literal `month` (or longer) intervals;
+///   Please read official documentation of [PostgreSQL Interval].)
 ///
 /// [`PgInterval`]: ../pg/data_types/struct.PgInterval.html
 /// [`IntervalDsl`]: ../pg/expression/extensions/trait.IntervalDsl.html
@@ -328,8 +340,10 @@ pub struct Interval;
 #[diesel(postgres_type(oid = 1083, array_oid = 1183))]
 #[diesel(sqlite_type(name = "Text"))]
 #[diesel(mysql_type(name = "Time"))]
+#[diesel(mariadb_type(name = "Time"))]
 pub struct Time;
 
+#[allow(rustdoc::redundant_explicit_links)]
 /// The timestamp SQL type.
 ///
 /// ### [`ToSql`](crate::serialize::ToSql) impls
@@ -376,6 +390,7 @@ pub struct Time;
 #[diesel(postgres_type(oid = 1114, array_oid = 1115))]
 #[diesel(sqlite_type(name = "Text"))]
 #[diesel(mysql_type(name = "Timestamp"))]
+#[diesel(mariadb_type(name = "Timestamp"))]
 pub struct Timestamp;
 
 /// The JSON SQL type.  This type can only be used with `feature =
@@ -383,6 +398,12 @@ pub struct Timestamp;
 ///
 /// For postgresql you should normally prefer [`Jsonb`](struct.Jsonb.html) instead,
 /// for the reasons discussed there.
+///
+/// ### Float round trip
+///
+/// Without `serde_json`'s `float_roundtrip` feature, a written `f64` may read
+/// back as the neighbouring double. Cargo features are additive, so a
+/// downstream crate can enable it.
 ///
 /// ### [`ToSql`] impls
 ///
@@ -398,6 +419,7 @@ pub struct Timestamp;
 #[derive(Debug, Clone, Copy, Default, QueryId, SqlType)]
 #[diesel(postgres_type(oid = 114, array_oid = 199))]
 #[diesel(mysql_type(name = "String"))]
+#[diesel(mariadb_type(name = "String"))]
 #[diesel(sqlite_type(name = "Text"))]
 pub struct Json;
 
@@ -440,6 +462,12 @@ pub struct Json;
 /// [pg-adv]: https://www.postgresql.org/docs/current/static/datatype-json.html
 /// [sqlite-adv]: https://sqlite.org/draft/jsonb.html
 ///
+/// ### Float round trip
+///
+/// Without `serde_json`'s `float_roundtrip` feature, a written `f64` may read
+/// back as the neighbouring double. Cargo features are additive, so a
+/// downstream crate can enable it.
+///
 /// ### [`ToSql`] impls
 ///
 /// - [`serde_json::Value`]
@@ -478,7 +506,7 @@ pub struct Json;
 /// #   feature = "serde_json",
 /// #   any(
 /// #       feature = "postgres_backend",
-/// #       all(feature = "sqlite", feature = "returning_clauses_for_sqlite_3_35"),
+/// #       feature = "returning_clauses_for_sqlite_3_35",
 /// #   )
 /// # ))]
 /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -491,18 +519,20 @@ pub struct Json;
 /// #         name VARCHAR NOT NULL,
 /// #         address JSONB NOT NULL
 /// #     )").execute(connection)?;
-/// # #[cfg(feature = "sqlite")]
+/// # #[cfg(feature = "__sqlite-shared")]
 /// #     diesel::sql_query("CREATE TABLE contacts (
 /// #         id INT PRIMARY KEY,
 /// #         name TEXT NOT NULL,
 /// #         address BLOB NOT NULL
 /// #     )").execute(connection)?;
-/// let santas_address: serde_json::Value = serde_json::from_str(r#"{
+/// let santas_address: serde_json::Value = serde_json::from_str(
+///     r#"{
 ///     "street": "Article Circle Expressway 1",
 ///     "city": "North Pole",
 ///     "postcode": "99705",
 ///     "state": "Alaska"
-/// }"#)?;
+/// }"#,
+/// )?;
 /// let inserted_address = insert_into(contacts)
 ///     .values((name.eq("Claus"), address.eq(&santas_address)))
 ///     .returning(address)
@@ -514,7 +544,7 @@ pub struct Json;
 /// #   feature = "serde_json",
 /// #   any(
 /// #       feature = "postgres_backend",
-/// #       all(feature = "sqlite", feature = "returning_clauses_for_sqlite_3_35"),
+/// #       feature = "returning_clauses_for_sqlite_3_35",
 /// #   )
 /// # )))]
 /// # fn main() {}
@@ -547,16 +577,34 @@ where
     type IsNull = is_nullable::IsNullable;
 }
 
+/// The `UUID` SQL type ([PostgreSQL](https://www.postgresql.org/docs/current/datatype-uuid.html), [MariaDB](https://mariadb.com/docs/server/reference/data-types/string-data-types/uuid-data-type)). This type can only be used with `feature = "uuid"`
+///
+/// ### [`ToSql`] impls
+///
+/// - [`uuid::Uuid`][Uuid]
+///
+/// ### [`FromSql`] impls
+///
+/// - [`uuid::Uuid`][Uuid]
+///
+/// [`ToSql`]: crate::serialize::ToSql
+/// [`FromSql`]: crate::deserialize::FromSql
+/// [Uuid]: https://docs.rs/uuid/*/uuid/struct.Uuid.html
+#[derive(Debug, Clone, Copy, Default, QueryId, SqlType)]
+#[diesel(postgres_type(oid = 2950, array_oid = 2951))]
+#[diesel(mariadb_type(name = "String"))]
+pub struct Uuid;
+
 #[doc(inline)]
 #[cfg(feature = "postgres_backend")]
 pub use crate::pg::sql_types::*;
 
 #[doc(inline)]
-#[cfg(feature = "mysql_backend")]
-pub use crate::mysql::sql_types::{Datetime, Unsigned};
+#[cfg(any(feature = "mysql_backend", feature = "mariadb_backend"))]
+pub use crate::mysql_like::sql_types::{Datetime, Unsigned};
 
 #[doc(inline)]
-#[cfg(feature = "sqlite")]
+#[cfg(feature = "__sqlite-shared")]
 pub use crate::sqlite::sql_types::Timestamptz as TimestamptzSqlite;
 
 /// Indicates that a SQL type exists for a backend.
@@ -570,6 +618,7 @@ pub use crate::sqlite::sql_types::Timestamptz as TimestamptzSqlite;
 /// #[diesel(postgres_type(oid = 23, array_oid = 1007))]
 /// #[diesel(sqlite_type(name = "Integer"))]
 /// #[diesel(mysql_type(name = "Long"))]
+/// #[diesel(mariadb_type(name = "Long"))]
 /// pub struct Integer;
 /// ```
 pub trait HasSqlType<ST>: TypeMetadata {
@@ -651,7 +700,6 @@ where
 /// # Deriving
 ///
 /// This trait is automatically implemented by [`#[derive(SqlType)]`](derive@SqlType)
-///
 pub trait SingleValue: SqlType {}
 
 impl<T: SqlType + SingleValue> SingleValue for Nullable<T> {}
@@ -667,7 +715,6 @@ pub use diesel_derives::SqlType;
 ///
 /// This trait is automatically implemented by [`#[derive(SqlType)]`](derive@SqlType)
 /// which sets `IsNull` to [`is_nullable::NotNull`]
-///
 pub trait SqlType: 'static {
     /// Is this type nullable?
     ///
@@ -679,6 +726,32 @@ pub trait SqlType: 'static {
 
     #[doc(hidden)]
     const IS_ARRAY: bool = false;
+}
+
+/// A marker trait for SQL types representing database side enums
+///
+/// This trait describes how an enum should be mapped to the underlying database storage type
+/// by specifying one of a set of different strategies.
+///
+/// The generic constant `HAS_EXPLICIT_DISCRIMINANT` can be used to enforce that for a given mapping
+/// the user needs to provide explicit discriminant values. The [`#[derive(Enum)]`](crate::types::Enum) macro
+/// will pass the true only if this is the case.
+///
+/// The generic type `DB` represents the database backend for which this mapping is valid
+///
+/// # Deriving
+///
+/// This trait can be automatically derived by using [`#[derive(SqlType)]`](derive@SqlType)
+/// with the `#[diesel(enum_type)]` attribute
+#[diesel_derives::__diesel_public_if(
+    feature = "i-implement-a-third-party-backend-and-opt-into-breaking-changes"
+)]
+// TODO: it seems like `#[diagnostic::on_unimplemented]` doesn't work here
+pub trait EnumSqlType<const HAS_EXPLICIT_DISCRIMINANT: bool, DB: Backend>: SqlType {
+    /// The mapping strategy used by this type
+    ///
+    /// This mainly exists to share the logic between different SQL types
+    type Strategy: crate::types::enum_::EnumMapping<DB>;
 }
 
 /// Is one value of `IsNull` nullable?
@@ -774,9 +847,11 @@ pub mod is_nullable {
     pub type MaybeNullable<N, T> = <N as MaybeNullableType<T>>::Out;
 
     /// Represents the output type of [`OneIsNullable`]
+    pub type OneNullable<T1, T2> = <T1 as OneIsNullable<T2>>::Out;
+
+    /// Represents the output type of [`OneIsNullable`]
     /// for two given SQL types
-    pub type IsOneNullable<S1, S2> =
-        <IsSqlTypeNullable<S1> as OneIsNullable<IsSqlTypeNullable<S2>>>::Out;
+    pub type IsOneNullable<S1, S2> = OneNullable<IsSqlTypeNullable<S1>, IsSqlTypeNullable<S2>>;
 
     /// Represents the output type of [`AllAreNullable`]
     /// for two given SQL types
@@ -800,3 +875,22 @@ impl BoolOrNullableBool for Nullable<Bool> {}
 
 #[doc(inline)]
 pub use crate::expression::expression_types::Untyped;
+
+pub(crate) mod helper {
+    use super::{MaybeNullableType, OneIsNullable, SingleValue};
+
+    pub trait CombinedNullableValue<O, Out>: SingleValue {
+        type Out: SingleValue;
+    }
+
+    impl<T, O, Out> CombinedNullableValue<O, Out> for T
+    where
+        T: SingleValue,
+        O: SingleValue,
+        T::IsNull: OneIsNullable<O::IsNull>,
+        <T::IsNull as OneIsNullable<O::IsNull>>::Out: MaybeNullableType<Out>,
+        <<T::IsNull as OneIsNullable<O::IsNull>>::Out as MaybeNullableType<Out>>::Out: SingleValue,
+    {
+        type Out = <<T::IsNull as OneIsNullable<O::IsNull>>::Out as MaybeNullableType<Out>>::Out;
+    }
+}

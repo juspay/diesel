@@ -52,6 +52,10 @@
 //!         .execute(conn)
 //! }
 //!
+//! # // This test uses synchronization primitives that are unsupported under miri.
+//! #[cfg(miri)]
+//! fn main() {}
+//! #[cfg(not(miri))]
 //! fn main() {
 //!     let pool = get_connection_pool();
 //!     let mut threads = vec![];
@@ -137,7 +141,7 @@
 //! mod tests {
 //!     use super::*;
 //!
-//!     #[test]
+//!     #[diesel_test_helper::test]
 //!     fn test_1() {
 //!         let pool = get_testing_pool();
 //!         let mut conn = pool.get().unwrap();
@@ -154,7 +158,7 @@
 //!             .unwrap();
 //!     }
 //!
-//!     #[test]
+//!     #[diesel_test_helper::test]
 //!     fn test_2() {
 //!         let pool = get_testing_pool();
 //!         let mut conn = pool.get().unwrap();
@@ -178,8 +182,8 @@ pub use r2d2::*;
 /// [`r2d2::Pool`]: r2d2::Pool
 pub type PoolError = r2d2::Error;
 
-use std::fmt;
-use std::marker::PhantomData;
+use alloc::fmt;
+use core::marker::PhantomData;
 
 use crate::backend::Backend;
 use crate::connection::{
@@ -189,6 +193,7 @@ use crate::connection::{
 use crate::expression::QueryMetadata;
 use crate::prelude::*;
 use crate::query_builder::{Query, QueryFragment, QueryId};
+use crate::query_dsl::RunQueryDslSupport;
 
 /// An r2d2 connection manager for use with Diesel.
 ///
@@ -201,7 +206,7 @@ pub struct ConnectionManager<T> {
 
 impl<T> fmt::Debug for ConnectionManager<T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "ConnectionManager<{}>", std::any::type_name::<T>())
+        write!(f, "ConnectionManager<{}>", core::any::type_name::<T>())
     }
 }
 
@@ -246,7 +251,7 @@ impl fmt::Display for Error {
     }
 }
 
-impl ::std::error::Error for Error {}
+impl ::core::error::Error for Error {}
 
 impl From<crate::result::Error> for Error {
     fn from(other: crate::result::Error) -> Self {
@@ -381,7 +386,7 @@ where
 
 #[doc(hidden)]
 #[allow(missing_debug_implementations)]
-pub struct PoolTransactionManager<T>(std::marker::PhantomData<T>);
+pub struct PoolTransactionManager<T>(core::marker::PhantomData<T>);
 
 impl<M, T> TransactionManager<PooledConnection<M>> for PoolTransactionManager<T>
 where
@@ -453,7 +458,7 @@ impl Query for CheckConnectionQuery {
     type SqlType = crate::sql_types::Integer;
 }
 
-impl<C> RunQueryDsl<C> for CheckConnectionQuery {}
+impl RunQueryDslSupport for CheckConnectionQuery {}
 
 /// A connection customizer designed for use in tests. Implements
 /// [CustomizeConnection] in a way that ensures transactions
@@ -468,17 +473,26 @@ impl<C: Connection> CustomizeConnection<C, crate::r2d2::Error> for TestCustomize
     }
 }
 
-#[cfg(test)]
+// The r2d2 pool spawns worker threads via `scheduled-thread-pool`, which
+// relies on `parking_lot_core`'s futex usage. Miri flags that futex call as
+// undefined behavior (incorrect c-variadic argument type), which is a known
+// issue in `parking_lot_core` rather than in diesel, so these tests are
+// excluded from miri runs.
+#[cfg(all(
+    test,
+    not(miri),
+    not(all(target_family = "wasm", target_os = "unknown"))
+))]
 mod tests {
-    use std::sync::mpsc;
     use std::sync::Arc;
+    use std::sync::mpsc;
     use std::thread;
     use std::time::Duration;
 
     use crate::r2d2::*;
     use crate::test_helpers::*;
 
-    #[test]
+    #[diesel_test_helper::test]
     fn establish_basic_connection() {
         let manager = ConnectionManager::<TestConnection>::new(database_url());
         let pool = Arc::new(Pool::builder().max_size(2).build(manager).unwrap());
@@ -508,7 +522,7 @@ mod tests {
         pool.get().unwrap();
     }
 
-    #[test]
+    #[diesel_test_helper::test]
     fn is_valid() {
         let manager = ConnectionManager::<TestConnection>::new(database_url());
         let pool = Pool::builder()
@@ -520,7 +534,7 @@ mod tests {
         pool.get().unwrap();
     }
 
-    #[test]
+    #[diesel_test_helper::test]
     fn pooled_connection_impls_connection() {
         use crate::select;
         use crate::sql_types::Text;
@@ -537,7 +551,7 @@ mod tests {
         assert_eq!("foo", query.get_result::<String>(&mut conn).unwrap());
     }
 
-    #[test]
+    #[diesel_test_helper::test]
     fn check_pool_does_actually_hold_connections() {
         use std::sync::atomic::{AtomicU32, Ordering};
 
@@ -655,7 +669,7 @@ mod tests {
     }
 
     #[cfg(feature = "postgres")]
-    #[test]
+    #[diesel_test_helper::test]
     fn verify_that_begin_test_transaction_works_with_pools() {
         use crate::prelude::*;
         use crate::r2d2::*;

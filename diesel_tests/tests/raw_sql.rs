@@ -1,7 +1,12 @@
 use crate::schema::*;
+use diesel::sql_types::Integer;
 use diesel::*;
 
-#[test]
+// This test reads query results, which requires reading memory
+// allocated by the native sqlite library. Miri cannot track the
+// provenance of that memory when using `-Zmiri-native-lib`.
+#[cfg(not(miri))]
+#[diesel_test_helper::test]
 fn execute_query_by_raw_sql() {
     let conn = &mut connection();
 
@@ -13,7 +18,11 @@ fn execute_query_by_raw_sql() {
     assert_eq!(Ok(expected_users), users);
 }
 
-#[test]
+// This test reads query results, which requires reading memory
+// allocated by the native sqlite library. Miri cannot track the
+// provenance of that memory when using `-Zmiri-native-lib`.
+#[cfg(not(miri))]
+#[diesel_test_helper::test]
 fn query_by_raw_sql() {
     let conn = &mut connection_with_sean_and_tess_in_users_table();
     let sean = find_user_by_name("Sean", conn);
@@ -24,7 +33,11 @@ fn query_by_raw_sql() {
     assert_eq!(Ok(expected), users);
 }
 
-#[test]
+// This test reads query results, which requires reading memory
+// allocated by the native sqlite library. Miri cannot track the
+// provenance of that memory when using `-Zmiri-native-lib`.
+#[cfg(not(miri))]
+#[diesel_test_helper::test]
 fn sql_query_deserializes_by_name_not_index() {
     let conn = &mut connection_with_sean_and_tess_in_users_table();
     let sean = find_user_by_name("Sean", conn);
@@ -35,7 +48,11 @@ fn sql_query_deserializes_by_name_not_index() {
     assert_eq!(Ok(expected), users);
 }
 
-#[test]
+// This test reads query results, which requires reading memory
+// allocated by the native sqlite library. Miri cannot track the
+// provenance of that memory when using `-Zmiri-native-lib`.
+#[cfg(not(miri))]
+#[diesel_test_helper::test]
 fn sql_query_can_take_bind_params() {
     use diesel::sql_types::Text;
 
@@ -53,7 +70,11 @@ fn sql_query_can_take_bind_params() {
     assert_eq!(Ok(expected), users);
 }
 
-#[test]
+// This test reads query results, which requires reading memory
+// allocated by the native sqlite library. Miri cannot track the
+// provenance of that memory when using `-Zmiri-native-lib`.
+#[cfg(not(miri))]
+#[diesel_test_helper::test]
 fn sql_query_can_take_bind_params_boxed() {
     use diesel::sql_types::Text;
 
@@ -85,4 +106,45 @@ fn sql_query_can_take_bind_params_boxed() {
     let expected = vec![tess];
 
     assert_eq!(Ok(expected), users);
+}
+
+#[diesel_test_helper::test]
+fn fewer_binds_than_placeholders() {
+    let conn = &mut connection();
+    let query = if cfg!(feature = "postgres") {
+        diesel::sql_query("SELECT $1, $2, $3, $4")
+    } else {
+        diesel::sql_query("SELECT ?, ?, ?, ?")
+    };
+    let r = query.bind::<Integer, _>(1).execute(conn);
+    assert!(r.is_err(), "expected an error for missing binds, got {r:?}");
+
+    assert_eq!(
+        r.unwrap_err().to_string(),
+        if cfg!(feature = "postgres") {
+            "bind message supplies 1 parameters, but prepared statement \"\" requires 4"
+        } else {
+            "prepared statement expected a different number of parameters than provided: Expected 4, provided: 1"
+        }
+    );
+}
+
+#[diesel_test_helper::test]
+fn no_binds_for_placeholder() {
+    let conn = &mut connection();
+    let query = if cfg!(feature = "postgres") {
+        diesel::sql_query("SELECT $1")
+    } else {
+        diesel::sql_query("SELECT ?")
+    };
+    let r = query.execute(conn);
+    assert!(r.is_err(), "expected an error for missing binds, got {r:?}");
+    assert_eq!(
+        r.unwrap_err().to_string(),
+        if cfg!(feature = "postgres") {
+            "bind message supplies 0 parameters, but prepared statement \"\" requires 1"
+        } else {
+            "prepared statement expected a different number of parameters than provided: Expected 1, provided: 0"
+        }
+    );
 }

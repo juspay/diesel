@@ -1,20 +1,21 @@
 [package]
 name = "migrations_macros"
-version = "2.2.0"
+version = "2.4.0"
 license = "MIT OR Apache-2.0"
 description = "Codegeneration macros for diesels embedded migrations"
 homepage = "https://diesel.rs"
 repository = "https://github.com/diesel-rs/diesel"
-edition = "2021"
+edition.workspace = true
 include.workspace = true
 rust-version.workspace = true
 
 [dependencies]
 quote = "1"
 proc-macro2 = "1"
+syn = "3"
 
 [dependencies.migrations_internals]
-version = "~2.2.0"
+version = "~2.4.0"
 path = "../migrations_internals"
 
 [dev-dependencies]
@@ -39,3 +40,7 @@ default = []
 sqlite = []
 postgres = []
 mysql = []
+mariadb = []
+
+[lints]
+workspace = true

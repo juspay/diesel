@@ -1,7 +1,11 @@
 use crate::schema::*;
 use diesel::*;
 
-#[test]
+// This test reads query results, which requires reading memory
+// allocated by the native sqlite library. Miri cannot track the
+// provenance of that memory when using `-Zmiri-native-lib`.
+#[cfg(not(miri))]
+#[diesel_test_helper::test]
 fn filter_by_inequality() {
     use crate::schema::users::dsl::*;
 
@@ -27,7 +31,11 @@ fn filter_by_inequality() {
     );
 }
 
-#[test]
+// This test reads query results, which requires reading memory
+// allocated by the native sqlite library. Miri cannot track the
+// provenance of that memory when using `-Zmiri-native-lib`.
+#[cfg(not(miri))]
+#[diesel_test_helper::test]
 fn filter_by_gt() {
     use crate::schema::users::dsl::*;
 
@@ -46,7 +54,11 @@ fn filter_by_gt() {
     assert_eq!(vec![jim], users.filter(id.gt(2)).load(connection).unwrap());
 }
 
-#[test]
+// This test reads query results, which requires reading memory
+// allocated by the native sqlite library. Miri cannot track the
+// provenance of that memory when using `-Zmiri-native-lib`.
+#[cfg(not(miri))]
+#[diesel_test_helper::test]
 fn filter_by_ge() {
     use crate::schema::users::dsl::*;
 
@@ -65,7 +77,11 @@ fn filter_by_ge() {
     assert_eq!(vec![jim], users.filter(id.ge(3)).load(connection).unwrap());
 }
 
-#[test]
+// This test reads query results, which requires reading memory
+// allocated by the native sqlite library. Miri cannot track the
+// provenance of that memory when using `-Zmiri-native-lib`.
+#[cfg(not(miri))]
+#[diesel_test_helper::test]
 fn filter_by_lt() {
     use crate::schema::users::dsl::*;
 
@@ -84,7 +100,11 @@ fn filter_by_lt() {
     assert_eq!(vec![sean], users.filter(id.lt(2)).load(connection).unwrap());
 }
 
-#[test]
+// This test reads query results, which requires reading memory
+// allocated by the native sqlite library. Miri cannot track the
+// provenance of that memory when using `-Zmiri-native-lib`.
+#[cfg(not(miri))]
+#[diesel_test_helper::test]
 fn filter_by_le() {
     use crate::schema::users::dsl::*;
 
@@ -103,7 +123,11 @@ fn filter_by_le() {
     assert_eq!(vec![sean], users.filter(id.le(1)).load(connection).unwrap());
 }
 
-#[test]
+// This test reads query results, which requires reading memory
+// allocated by the native sqlite library. Miri cannot track the
+// provenance of that memory when using `-Zmiri-native-lib`.
+#[cfg(not(miri))]
+#[diesel_test_helper::test]
 fn filter_by_between() {
     use crate::schema::users::dsl::*;
 
@@ -130,7 +154,11 @@ fn filter_by_between() {
     );
 }
 
-#[test]
+// This test reads query results, which requires reading memory
+// allocated by the native sqlite library. Miri cannot track the
+// provenance of that memory when using `-Zmiri-native-lib`.
+#[cfg(not(miri))]
+#[diesel_test_helper::test]
 fn filter_by_like() {
     use crate::schema::users::dsl::*;
 
@@ -144,7 +172,7 @@ fn filter_by_like() {
         .values(&data)
         .execute(connection)
         .unwrap();
-    let data = users.load::<User>(connection).unwrap();
+    let data = users.order(id).load::<User>(connection).unwrap();
     let sean = data[0].clone();
     let tess = data[1].clone();
     let jim = data[2].clone();
@@ -167,7 +195,7 @@ fn filter_by_like() {
     );
 }
 
-#[test]
+#[diesel_test_helper::test]
 #[cfg(feature = "postgres")]
 fn filter_by_ilike() {
     use crate::schema::users::dsl::*;
@@ -182,7 +210,7 @@ fn filter_by_ilike() {
         .values(&data)
         .execute(connection)
         .unwrap();
-    let data = users.load::<User>(connection).unwrap();
+    let data = users.order(id).load::<User>(connection).unwrap();
     let sean = data[0].clone();
     let tess = data[1].clone();
     let jim = data[2].clone();
@@ -205,37 +233,11 @@ fn filter_by_ilike() {
     );
 }
 
-#[test]
-#[cfg(feature = "postgres")]
-fn filter_by_any() {
-    use crate::schema::users::dsl::*;
-
-    let connection = &mut connection_with_3_users();
-    let sean = User::new(1, "Sean");
-    let tess = User::new(2, "Tess");
-    let jim = User::new(3, "Jim");
-
-    let owned_names = vec!["Sean", "Tess"];
-    let borrowed_names: &[&str] = &["Sean", "Jim"];
-    assert_eq!(
-        vec![sean.clone(), tess],
-        users
-            .filter(name.eq_any(owned_names))
-            .order(id.asc())
-            .load(connection)
-            .unwrap()
-    );
-    assert_eq!(
-        vec![sean, jim],
-        users
-            .filter(name.eq_any(borrowed_names))
-            .order(id.asc())
-            .load(connection)
-            .unwrap()
-    );
-}
-
-#[test]
+// This test reads query results, which requires reading memory
+// allocated by the native sqlite library. Miri cannot track the
+// provenance of that memory when using `-Zmiri-native-lib`.
+#[cfg(not(miri))]
+#[diesel_test_helper::test]
 fn filter_by_in() {
     use crate::schema::users::dsl::*;
 
@@ -264,7 +266,7 @@ fn filter_by_in() {
     );
 }
 
-#[test]
+#[diesel_test_helper::test]
 #[cfg(feature = "postgres")]
 fn filter_by_in_explicit_array() {
     use crate::schema::users::dsl::*;
@@ -284,10 +286,7 @@ fn filter_by_in_explicit_array() {
     if !debug_subselect
         .contains(r#"= ANY(ARRAY(SELECT "users_alias"."name" FROM "users" AS "users_alias"))"#)
     {
-        panic!(
-            "Generated query (subselect) does not contain expected SQL: {}",
-            debug_subselect
-        );
+        panic!("Generated query (subselect) does not contain expected SQL: {debug_subselect}");
     }
 
     assert_eq!(
@@ -312,8 +311,7 @@ fn filter_by_in_explicit_array() {
         debug_query::<diesel::pg::Pg, _>(&query_array_construct).to_string();
     if !debug_array_construct.contains("= ANY(ARRAY[(SELECT") {
         panic!(
-            "Generated query (array construct) does not contain expected SQL: {}",
-            debug_array_construct
+            "Generated query (array construct) does not contain expected SQL: {debug_array_construct}"
         );
     }
 
@@ -323,7 +321,7 @@ fn filter_by_in_explicit_array() {
     );
 }
 
-#[test]
+#[diesel_test_helper::test]
 #[cfg(feature = "postgres")]
 fn filter_array_by_in() {
     use crate::schema::posts::dsl::*;
@@ -338,7 +336,7 @@ fn filter_array_by_in() {
     assert_eq!(result, &[] as &[i32]);
 }
 
-#[test]
+#[diesel_test_helper::test]
 #[cfg(feature = "postgres")]
 fn filter_array_by_not_in() {
     use crate::schema::posts::dsl::*;

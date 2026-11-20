@@ -1,4 +1,4 @@
-use std::ops::Mul;
+use core::ops::Mul;
 
 use crate::data_types::PgInterval;
 
@@ -28,16 +28,19 @@ use crate::data_types::PgInterval;
 /// #        varchar not null, created_at timestamp not null)")
 /// #     .execute(connection)
 /// #     .unwrap();
-/// diesel::sql_query("INSERT INTO users (name, created_at) VALUES
+/// diesel::sql_query(
+///     "INSERT INTO users (name, created_at) VALUES
 ///     ('Sean', NOW()), ('Tess', NOW() - '5 minutes'::interval),
-///     ('Jim', NOW() - '10 minutes'::interval)")
-///     .execute(connection)
-///     .unwrap();
+///     ('Jim', NOW() - '10 minutes'::interval)",
+/// )
+/// .execute(connection)
+/// .unwrap();
 ///
 /// let mut data: Vec<String> = users
 ///     .select(name)
 ///     .filter(created_at.gt(now - 7.minutes()))
-///     .load(connection).unwrap();
+///     .load(connection)
+///     .unwrap();
 /// assert_eq!(2, data.len());
 /// assert_eq!("Sean".to_string(), data[0]);
 /// assert_eq!("Tess".to_string(), data[1]);
@@ -63,16 +66,19 @@ use crate::data_types::PgInterval;
 /// #        varchar not null, created_at timestamp not null)")
 /// #     .execute(connection)
 /// #     .unwrap();
-/// diesel::sql_query("INSERT INTO users (name, created_at) VALUES
+/// diesel::sql_query(
+///     "INSERT INTO users (name, created_at) VALUES
 ///     ('Sean', NOW()), ('Tess', NOW() - '5 days'::interval),
-///     ('Jim', NOW() - '10 days'::interval)")
-///     .execute(connection)
-///     .unwrap();
+///     ('Jim', NOW() - '10 days'::interval)",
+/// )
+/// .execute(connection)
+/// .unwrap();
 ///
 /// let mut data: Vec<String> = users
 ///     .select(name)
 ///     .filter(created_at.gt(now - 7.days()))
-///     .load(connection).unwrap();
+///     .load(connection)
+///     .unwrap();
 /// assert_eq!(2, data.len());
 /// assert_eq!("Sean".to_string(), data[0]);
 /// assert_eq!("Tess".to_string(), data[1]);
@@ -292,7 +298,7 @@ mod tests {
         };
     }
 
-    #[test]
+    #[diesel_test_helper::test]
     fn intervals_match_pg_values_i32() {
         test_fn!(i32, test_microseconds, microseconds, i32::MAX);
         test_fn!(i32, test_milliseconds, milliseconds, i32::MAX);
@@ -305,7 +311,7 @@ mod tests {
         test_fn!(i32, test_years, years, i32::MAX / 12);
     }
 
-    #[test]
+    #[diesel_test_helper::test]
     fn intervals_match_pg_values_i64() {
         // postgres does not really support intervals with more than i32::MAX microseconds
         // https://www.postgresql.org/message-id/20140126025049.GL9750@momjian.us
@@ -320,7 +326,7 @@ mod tests {
         test_fn!(i64, test_years, years, (i32::MAX / 12) as i64);
     }
 
-    #[test]
+    #[diesel_test_helper::test]
     fn intervals_match_pg_values_f64() {
         const MAX_DIFF: i64 = 1_000_000;
         // postgres does not really support intervals with more than i32::MAX microseconds

@@ -5,6 +5,8 @@ use crate::result::Error::SerializationError;
 use crate::result::QueryResult;
 use crate::serialize::{IsNull, Output, ToSql};
 use crate::sql_types::{HasSqlType, TypeMetadata};
+use alloc::boxed::Box;
+use alloc::vec::Vec;
 
 #[doc(inline)]
 #[diesel_derives::__diesel_public_if(
@@ -34,7 +36,6 @@ pub trait BindCollector<'a, DB: TypeMetadata>: Sized {
         U: ToSql<T, DB> + ?Sized + 'a;
 
     /// Push a null value with the given type information onto the bind collector
-    ///
     // For backward compatibility reasons we provide a default implementation
     // but custom backends that want to support `#[derive(MultiConnection)]`
     // need to provide a customized implementation of this function
@@ -46,6 +47,21 @@ pub trait BindCollector<'a, DB: TypeMetadata>: Sized {
     }
 }
 
+/// A helper trait indicating that this is a bind data container
+#[diesel_derives::__diesel_public_if(
+    feature = "i-implement-a-third-party-backend-and-opt-into-breaking-changes"
+)]
+pub trait BindData: Send + 'static {
+    /// How many bind values does this container contain
+    fn len(&self) -> usize;
+
+    /// Is this set of bind data empty
+    // This mostly exists to satisfy clippy::len_without_is_empty
+    fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+}
+
 /// A movable version of the bind collector which allows it to be extracted, moved and refilled.
 ///
 /// This is mostly useful in async context where bind data needs to be moved across threads.
@@ -54,13 +70,19 @@ pub trait BindCollector<'a, DB: TypeMetadata>: Sized {
 )]
 pub trait MoveableBindCollector<DB: TypeMetadata> {
     /// The movable bind data of this bind collector
-    type BindData: Send + 'static;
+    type BindData: BindData;
 
     /// Builds a movable version of the bind collector
     fn moveable(&self) -> Self::BindData;
 
     /// Refill the bind collector with its bind data
     fn append_bind_data(&mut self, from: &Self::BindData);
+
+    /// Push bind data as debug representation
+    fn push_debug_binds<'a, 'b>(
+        bind_data: &Self::BindData,
+        f: &'a mut Vec<Box<dyn core::fmt::Debug + 'b>>,
+    );
 }
 
 #[derive(Debug)]
@@ -145,7 +167,7 @@ where
 impl<DB> MoveableBindCollector<DB> for RawBytesBindCollector<DB>
 where
     for<'a> DB: Backend<BindCollector<'a> = Self> + TypeMetadata + 'static,
-    <DB as TypeMetadata>::TypeMetadata: Clone + Send,
+    <DB as TypeMetadata>::TypeMetadata: core::fmt::Debug + Clone + Send,
 {
     type BindData = Self;
 
@@ -160,11 +182,36 @@ where
         self.binds.extend(from.binds.iter().cloned());
         self.metadata.extend(from.metadata.clone());
     }
+
+    fn push_debug_binds<'a, 'b>(
+        bind_data: &Self::BindData,
+        f: &'a mut Vec<Box<dyn core::fmt::Debug + 'b>>,
+    ) {
+        f.extend(
+            bind_data
+                .metadata
+                .iter()
+                .map(|m| Box::new(m.clone()) as Box<dyn core::fmt::Debug>),
+        );
+    }
+}
+
+impl<DB> BindData for RawBytesBindCollector<DB>
+where
+    DB: Backend + TypeMetadata,
+    for<'a> DB: Backend<BindCollector<'a> = Self> + TypeMetadata + 'static,
+    <DB as TypeMetadata>::TypeMetadata: core::fmt::Debug + Clone + Send,
+{
+    fn len(&self) -> usize {
+        self.binds.len()
+    }
 }
 
 // This is private for now as we may want to add `Into` impls for the wrapper type
 // later on
 mod private {
+    use alloc::vec::Vec;
+
     /// A type wrapper for raw bytes
     #[derive(Debug)]
     pub struct ByteWrapper<'a>(pub(crate) &'a mut Vec<u8>);

@@ -6,13 +6,37 @@ description: "Test: print_schema_custom_types_custom_schema"
 
 pub mod v2 {
     pub mod sql_types {
-        #[derive(diesel::query_builder::QueryId, Clone, diesel::sql_types::SqlType)]
+        #[derive(Clone, diesel::query_builder::QueryId, diesel::sql_types::SqlType)]
         #[diesel(postgres_type(name = "auto_test_frequency", schema = "v2"))]
+        #[diesel(enum_type)]
         pub struct AutoTestFrequency;
 
-        #[derive(diesel::query_builder::QueryId, Clone, diesel::sql_types::SqlType)]
+        #[derive(Clone, diesel::query_builder::QueryId, diesel::sql_types::SqlType)]
         #[diesel(postgres_type(name = "auto_test_status", schema = "v2"))]
+        #[diesel(enum_type)]
         pub struct AutoTestStatus;
+    }
+
+    pub mod rust_types {
+        #[derive(Clone, Copy, Debug, Eq, PartialEq, diesel::types::Enum)]
+        #[diesel(sql_type = super::sql_types::AutoTestFrequency)]
+        pub enum AutoTestFrequency {
+            #[diesel(rename = "weekly")]
+            Weekly,
+            #[diesel(rename = "monthly")]
+            Monthly,
+        }
+
+        #[derive(Clone, Copy, Debug, Eq, PartialEq, diesel::types::Enum)]
+        #[diesel(sql_type = super::sql_types::AutoTestStatus)]
+        pub enum AutoTestStatus {
+            #[diesel(rename = "pending")]
+            Pending,
+            #[diesel(rename = "faulted")]
+            Faulted,
+            #[diesel(rename = "completed")]
+            Completed,
+        }
     }
 
     diesel::table! {

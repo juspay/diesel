@@ -1,7 +1,10 @@
 use super::{AstPass, QueryBuilder, QueryFragment};
 use crate::backend::Backend;
-use std::fmt::{self, Debug, Display};
-use std::marker::PhantomData;
+use alloc::boxed::Box;
+use alloc::string::String;
+use alloc::vec::Vec;
+use core::fmt::{self, Debug, Display};
+use core::marker::PhantomData;
 
 /// A struct that implements `fmt::Display` and `fmt::Debug` to show the SQL
 /// representation of a query.
@@ -27,6 +30,54 @@ impl<'a, T, DB> DebugQuery<'a, T, DB> {
     }
 }
 
+fn serialize_query<DB>(query: &dyn QueryFragment<DB>) -> Result<String, fmt::Error>
+where
+    DB: Backend + Default,
+    DB::QueryBuilder: Default,
+{
+    let mut query_builder = DB::QueryBuilder::default();
+    let backend = DB::default();
+    QueryFragment::<DB>::to_sql(query, &mut query_builder, &backend).map_err(|_| fmt::Error)?;
+    Ok(query_builder.finish())
+}
+
+fn fmt_query<DB>(
+    query: &dyn QueryFragment<DB>,
+    f: &mut fmt::Formatter<'_>,
+    formatter: fn(String, &DebugBinds<'_>, f: &mut fmt::Formatter<'_>) -> fmt::Result,
+) -> fmt::Result
+where
+    DB: Backend + Default,
+    DB::QueryBuilder: Default,
+{
+    let backend = DB::default();
+    let mut buffer = Vec::new();
+    let ast_pass = AstPass::debug_binds(&mut buffer, &backend);
+    query.walk_ast(ast_pass).map_err(|_| fmt::Error)?;
+    let debug_binds = DebugBinds::new(&buffer);
+    let query = serialize_query(query)?;
+    formatter(query, &debug_binds, f)
+}
+
+pub(crate) fn display(
+    query: String,
+    debug_binds: &DebugBinds<'_>,
+    f: &mut fmt::Formatter<'_>,
+) -> fmt::Result {
+    write!(f, "{query} -- binds: {debug_binds:?}")
+}
+
+pub(crate) fn debug(
+    query: String,
+    debug_binds: &DebugBinds<'_>,
+    f: &mut fmt::Formatter<'_>,
+) -> fmt::Result {
+    f.debug_struct("Query")
+        .field("sql", &query)
+        .field("binds", &debug_binds)
+        .finish()
+}
+
 impl<T, DB> Display for DebugQuery<'_, T, DB>
 where
     DB: Backend + Default,
@@ -34,12 +85,7 @@ where
     T: QueryFragment<DB>,
 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let mut query_builder = DB::QueryBuilder::default();
-        let backend = DB::default();
-        QueryFragment::<DB>::to_sql(self.query, &mut query_builder, &backend)
-            .map_err(|_| fmt::Error)?;
-        let debug_binds = DebugBinds::<_, DB>::new(self.query);
-        write!(f, "{} -- binds: {:?}", query_builder.finish(), debug_binds)
+        fmt_query(self.query, f, display)
     }
 }
 
@@ -50,50 +96,32 @@ where
     T: QueryFragment<DB>,
 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let mut query_builder = DB::QueryBuilder::default();
-        let backend = DB::default();
-        QueryFragment::<DB>::to_sql(self.query, &mut query_builder, &backend)
-            .map_err(|_| fmt::Error)?;
-        let debug_binds = DebugBinds::<_, DB>::new(self.query);
-        f.debug_struct("Query")
-            .field("sql", &query_builder.finish())
-            .field("binds", &debug_binds)
-            .finish()
+        fmt_query(self.query, f, debug)
     }
 }
 
 /// A struct that implements `fmt::Debug` by walking the given AST and writing
 /// the `fmt::Debug` implementation of each bind parameter.
-pub(crate) struct DebugBinds<'a, T: 'a, DB> {
-    query: &'a T,
-    _marker: PhantomData<DB>,
+pub(crate) struct DebugBinds<'a> {
+    binds: &'a [Box<dyn Debug + 'a>],
 }
 
-impl<'a, T, DB> DebugBinds<'a, T, DB> {
-    fn new(query: &'a T) -> Self {
-        DebugBinds {
-            query,
-            _marker: PhantomData,
-        }
+impl<'a> DebugBinds<'a> {
+    pub(crate) fn new(binds: &'a [Box<dyn Debug + 'a>]) -> Self {
+        DebugBinds { binds }
     }
 }
 
-impl<T, DB> Debug for DebugBinds<'_, T, DB>
-where
-    DB: Backend + Default,
-    T: QueryFragment<DB>,
-{
+impl Debug for DebugBinds<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let backend = DB::default();
-        let mut buffer = Vec::new();
-        let ast_pass = AstPass::debug_binds(&mut buffer, &backend);
-        self.query.walk_ast(ast_pass).map_err(|_| fmt::Error)?;
-
-        let mut list = f.debug_list();
-        for entry in buffer {
-            list.entry(&entry);
-        }
-        list.finish()?;
-        Ok(())
+        format_list(f, self.binds)
     }
+}
+
+fn format_list<'b>(f: &mut fmt::Formatter<'_>, entries: &[Box<dyn Debug + 'b>]) -> fmt::Result {
+    let mut list = f.debug_list();
+    for entry in entries {
+        list.entry(entry);
+    }
+    list.finish()
 }

@@ -1,5 +1,6 @@
 use super::QueryFragment;
-use std::any::{Any, TypeId};
+use alloc::boxed::Box;
+use core::any::{Any, TypeId};
 
 /// Uniquely identifies queries by their type for the purpose of prepared
 /// statement caching.
@@ -52,6 +53,9 @@ pub trait QueryId {
     /// cache is a boxed query.
     const HAS_STATIC_QUERY_ID: bool = true;
 
+    #[doc(hidden)]
+    const IS_WINDOW_FUNCTION: bool = false;
+
     /// Returns the type id of `Self::QueryId` if `Self::HAS_STATIC_QUERY_ID`.
     /// Returns `None` otherwise.
     ///
@@ -78,18 +82,38 @@ impl<T: QueryId + ?Sized> QueryId for Box<T> {
     type QueryId = T::QueryId;
 
     const HAS_STATIC_QUERY_ID: bool = T::HAS_STATIC_QUERY_ID;
+
+    const IS_WINDOW_FUNCTION: bool = T::IS_WINDOW_FUNCTION;
+}
+
+impl<T: QueryId + ?Sized> QueryId for alloc::rc::Rc<T> {
+    type QueryId = T::QueryId;
+
+    const HAS_STATIC_QUERY_ID: bool = T::HAS_STATIC_QUERY_ID;
+
+    const IS_WINDOW_FUNCTION: bool = T::IS_WINDOW_FUNCTION;
+}
+
+impl<T: QueryId + ?Sized> QueryId for alloc::sync::Arc<T> {
+    type QueryId = T::QueryId;
+
+    const HAS_STATIC_QUERY_ID: bool = T::HAS_STATIC_QUERY_ID;
+
+    const IS_WINDOW_FUNCTION: bool = T::IS_WINDOW_FUNCTION;
 }
 
 impl<T: QueryId + ?Sized> QueryId for &T {
     type QueryId = T::QueryId;
 
     const HAS_STATIC_QUERY_ID: bool = T::HAS_STATIC_QUERY_ID;
+    const IS_WINDOW_FUNCTION: bool = T::IS_WINDOW_FUNCTION;
 }
 
 impl<DB> QueryId for dyn QueryFragment<DB> {
     type QueryId = ();
 
     const HAS_STATIC_QUERY_ID: bool = false;
+    // todo: we need to deal with IS_WINDOW_FUNCTION here
 }
 
 #[cfg(test)]
@@ -111,7 +135,7 @@ mod tests {
         T::query_id()
     }
 
-    #[test]
+    #[diesel_test_helper::test]
     fn queries_with_no_dynamic_elements_have_a_static_id() {
         use self::users::dsl::*;
         assert!(query_id(users).is_some());
@@ -119,14 +143,14 @@ mod tests {
         assert!(query_id(users.filter(name.eq("Sean"))).is_some());
     }
 
-    #[test]
+    #[diesel_test_helper::test]
     fn queries_with_different_types_have_different_ids() {
         let id1 = query_id(users::table.select(users::name));
         let id2 = query_id(users::table.select(users::id));
         assert_ne!(id1, id2);
     }
 
-    #[test]
+    #[diesel_test_helper::test]
     fn bind_params_use_only_sql_type_for_query_id() {
         use self::users::dsl::*;
         let id1 = query_id(users.filter(name.eq("Sean")));
@@ -135,7 +159,7 @@ mod tests {
         assert_eq!(id1, id2);
     }
 
-    #[test]
+    #[diesel_test_helper::test]
     #[cfg(feature = "postgres")]
     fn boxed_queries_do_not_have_static_query_id() {
         use crate::pg::Pg;

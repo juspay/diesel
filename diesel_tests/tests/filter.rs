@@ -1,5 +1,8 @@
 use crate::schema::*;
+use diesel::sql_types::VarChar;
 use diesel::*;
+use std::rc::Rc;
+use std::sync::Arc;
 
 macro_rules! assert_sets_eq {
     ($set1:expr, $set2:expr) => {
@@ -20,7 +23,11 @@ macro_rules! assert_sets_eq {
     };
 }
 
-#[test]
+// This test reads query results, which requires reading memory
+// allocated by the native sqlite library. Miri cannot track the
+// provenance of that memory when using `-Zmiri-native-lib`.
+#[cfg(not(miri))]
+#[diesel_test_helper::test]
 fn filter_by_int_equality() {
     use crate::schema::users::dsl::*;
 
@@ -39,7 +46,77 @@ fn filter_by_int_equality() {
     );
 }
 
-#[test]
+// This test reads query results, which requires reading memory
+// allocated by the native sqlite library. Miri cannot track the
+// provenance of that memory when using `-Zmiri-native-lib`.
+#[cfg(not(miri))]
+#[diesel_test_helper::test]
+fn filter_rc_by_int_equality() {
+    use crate::schema::users::dsl::*;
+
+    let connection = &mut connection_with_sean_and_tess_in_users_table();
+    let sean_id = find_user_by_name("Sean", connection).id;
+    let tess_id = find_user_by_name("Tess", connection).id;
+    let unused_id = sean_id + tess_id;
+
+    let sean = UserRcString {
+        id: sean_id,
+        name: Rc::new("Sean".to_string()),
+        hair_color: None,
+    };
+    let tess = UserRcString {
+        id: tess_id,
+        name: Rc::new("Tess".to_string()),
+        hair_color: None,
+    };
+    assert_eq!(Ok(sean), users.filter(id.eq(sean_id)).first(connection));
+    assert_eq!(Ok(tess), users.filter(id.eq(tess_id)).first(connection));
+    assert_eq!(
+        Err(NotFound),
+        users
+            .filter(id.eq(unused_id))
+            .first::<UserRcString>(connection)
+    );
+}
+
+// This test reads query results, which requires reading memory
+// allocated by the native sqlite library. Miri cannot track the
+// provenance of that memory when using `-Zmiri-native-lib`.
+#[cfg(not(miri))]
+#[diesel_test_helper::test]
+fn filter_arc_by_int_equality() {
+    use crate::schema::users::dsl::*;
+
+    let connection = &mut connection_with_sean_and_tess_in_users_table();
+    let sean_id = find_user_by_name("Sean", connection).id;
+    let tess_id = find_user_by_name("Tess", connection).id;
+    let unused_id = sean_id + tess_id;
+
+    let sean = UserArcString {
+        id: sean_id,
+        name: Arc::new("Sean".to_string()),
+        hair_color: None,
+    };
+    let tess = UserArcString {
+        id: tess_id,
+        name: Arc::new("Tess".to_string()),
+        hair_color: None,
+    };
+    assert_eq!(Ok(sean), users.filter(id.eq(sean_id)).first(connection));
+    assert_eq!(Ok(tess), users.filter(id.eq(tess_id)).first(connection));
+    assert_eq!(
+        Err(NotFound),
+        users
+            .filter(id.eq(unused_id))
+            .first::<UserArcString>(connection)
+    );
+}
+
+// This test reads query results, which requires reading memory
+// allocated by the native sqlite library. Miri cannot track the
+// provenance of that memory when using `-Zmiri-native-lib`.
+#[cfg(not(miri))]
+#[diesel_test_helper::test]
 fn filter_by_string_equality() {
     use crate::schema::users::dsl::*;
 
@@ -55,7 +132,11 @@ fn filter_by_string_equality() {
     );
 }
 
-#[test]
+// This test reads query results, which requires reading memory
+// allocated by the native sqlite library. Miri cannot track the
+// provenance of that memory when using `-Zmiri-native-lib`.
+#[cfg(not(miri))]
+#[diesel_test_helper::test]
 fn filter_by_equality_on_nullable_columns() {
     use crate::schema::users::dsl::*;
 
@@ -82,7 +163,11 @@ fn filter_by_equality_on_nullable_columns() {
     assert_eq!(vec![tess], source.load(connection).unwrap());
 }
 
-#[test]
+// This test reads query results, which requires reading memory
+// allocated by the native sqlite library. Miri cannot track the
+// provenance of that memory when using `-Zmiri-native-lib`.
+#[cfg(not(miri))]
+#[diesel_test_helper::test]
 fn filter_by_is_not_null_on_nullable_columns() {
     use crate::schema::users::dsl::*;
 
@@ -102,7 +187,11 @@ fn filter_by_is_not_null_on_nullable_columns() {
     assert_eq!(vec![derek], source.load(connection).unwrap());
 }
 
-#[test]
+// This test reads query results, which requires reading memory
+// allocated by the native sqlite library. Miri cannot track the
+// provenance of that memory when using `-Zmiri-native-lib`.
+#[cfg(not(miri))]
+#[diesel_test_helper::test]
 fn filter_by_is_null_on_nullable_columns() {
     use crate::schema::users::dsl::*;
 
@@ -122,7 +211,11 @@ fn filter_by_is_null_on_nullable_columns() {
     assert_eq!(vec![gordon], source.load(connection).unwrap());
 }
 
-#[test]
+// This test reads query results, which requires reading memory
+// allocated by the native sqlite library. Miri cannot track the
+// provenance of that memory when using `-Zmiri-native-lib`.
+#[cfg(not(miri))]
+#[diesel_test_helper::test]
 fn filter_after_joining() {
     use crate::schema::users::name;
 
@@ -155,7 +248,11 @@ fn filter_after_joining() {
     );
 }
 
-#[test]
+// This test reads query results, which requires reading memory
+// allocated by the native sqlite library. Miri cannot track the
+// provenance of that memory when using `-Zmiri-native-lib`.
+#[cfg(not(miri))]
+#[diesel_test_helper::test]
 fn select_then_filter() {
     use crate::schema::users::dsl::*;
 
@@ -176,7 +273,11 @@ fn select_then_filter() {
     );
 }
 
-#[test]
+// This test reads query results, which requires reading memory
+// allocated by the native sqlite library. Miri cannot track the
+// provenance of that memory when using `-Zmiri-native-lib`.
+#[cfg(not(miri))]
+#[diesel_test_helper::test]
 fn filter_then_select() {
     use crate::schema::users::dsl::*;
 
@@ -204,7 +305,11 @@ fn filter_then_select() {
     );
 }
 
-#[test]
+// This test reads query results, which requires reading memory
+// allocated by the native sqlite library. Miri cannot track the
+// provenance of that memory when using `-Zmiri-native-lib`.
+#[cfg(not(miri))]
+#[diesel_test_helper::test]
 fn select_by_then_filter() {
     use crate::schema::users::dsl::*;
 
@@ -225,7 +330,11 @@ fn select_by_then_filter() {
     );
 }
 
-#[test]
+// This test reads query results, which requires reading memory
+// allocated by the native sqlite library. Miri cannot track the
+// provenance of that memory when using `-Zmiri-native-lib`.
+#[cfg(not(miri))]
+#[diesel_test_helper::test]
 fn filter_then_select_by() {
     use crate::schema::users::dsl::*;
 
@@ -254,7 +363,11 @@ fn filter_then_select_by() {
     );
 }
 
-#[test]
+// This test reads query results, which requires reading memory
+// allocated by the native sqlite library. Miri cannot track the
+// provenance of that memory when using `-Zmiri-native-lib`.
+#[cfg(not(miri))]
+#[diesel_test_helper::test]
 fn filter_on_multiple_columns() {
     use crate::schema::users::dsl::*;
 
@@ -286,7 +399,11 @@ fn filter_on_multiple_columns() {
     assert_eq!(vec![brown_haired_tess], source.load(connection).unwrap());
 }
 
-#[test]
+// This test reads query results, which requires reading memory
+// allocated by the native sqlite library. Miri cannot track the
+// provenance of that memory when using `-Zmiri-native-lib`.
+#[cfg(not(miri))]
+#[diesel_test_helper::test]
 fn filter_called_twice_means_same_thing_as_and() {
     use crate::schema::users::dsl::*;
 
@@ -325,7 +442,7 @@ table! {
     }
 }
 
-#[test]
+#[diesel_test_helper::test]
 fn filter_on_column_equality() {
     use self::points::dsl::*;
 
@@ -340,7 +457,11 @@ fn filter_on_column_equality() {
     assert_sets_eq!(expected_data, data);
 }
 
-#[test]
+// This test reads query results, which requires reading memory
+// allocated by the native sqlite library. Miri cannot track the
+// provenance of that memory when using `-Zmiri-native-lib`.
+#[cfg(not(miri))]
+#[diesel_test_helper::test]
 fn filter_with_or() {
     use crate::schema::users::dsl::*;
 
@@ -360,7 +481,7 @@ fn filter_with_or() {
     assert_sets_eq!(expected_users, data);
 }
 
-#[test]
+#[diesel_test_helper::test]
 fn or_doesnt_mess_with_precedence_of_previous_statements() {
     use crate::schema::users::dsl::*;
 
@@ -382,7 +503,7 @@ fn or_doesnt_mess_with_precedence_of_previous_statements() {
     assert_eq!(Ok(0), count);
 }
 
-#[test]
+#[diesel_test_helper::test]
 fn not_does_not_affect_expressions_other_than_those_passed_to_it() {
     use crate::schema::users::dsl::*;
     use diesel::dsl::not;
@@ -397,7 +518,7 @@ fn not_does_not_affect_expressions_other_than_those_passed_to_it() {
     assert_eq!(Ok(1), count);
 }
 
-#[test]
+#[diesel_test_helper::test]
 fn not_affects_arguments_passed_when_they_contain_higher_operator_precedence() {
     use crate::schema::users::dsl::*;
     use diesel::dsl::not;
@@ -411,10 +532,16 @@ fn not_affects_arguments_passed_when_they_contain_higher_operator_precedence() {
     assert_eq!(Ok(2), count);
 }
 
-use diesel::sql_types::VarChar;
-define_sql_function!(fn lower(x: VarChar) -> VarChar);
+#[declare_sql_function]
+extern "SQL" {
+    fn lower(x: VarChar) -> VarChar;
+}
 
-#[test]
+// This test reads query results, which requires reading memory
+// allocated by the native sqlite library. Miri cannot track the
+// provenance of that memory when using `-Zmiri-native-lib`.
+#[cfg(not(miri))]
+#[diesel_test_helper::test]
 fn filter_by_boxed_predicate() {
     fn by_name(
         name: &str,
@@ -432,7 +559,55 @@ fn filter_by_boxed_predicate() {
     assert_eq!(Ok(tess), queried_tess);
 }
 
-#[test]
+// This test reads query results, which requires reading memory
+// allocated by the native sqlite library. Miri cannot track the
+// provenance of that memory when using `-Zmiri-native-lib`.
+#[cfg(not(miri))]
+#[diesel_test_helper::test]
+fn filter_by_rc_boxed_predicate() {
+    fn by_name(
+        name: &str,
+    ) -> Rc<dyn BoxableExpression<users::table, TestBackend, SqlType = sql_types::Bool>> {
+        Rc::new(lower(users::name).eq(name.to_string()))
+    }
+
+    let connection = &mut connection_with_sean_and_tess_in_users_table();
+    let sean = User::new(1, "Sean");
+    let tess = User::new(2, "Tess");
+    let queried_sean = users::table.filter(by_name("sean")).first(connection);
+    let queried_tess = users::table.filter(by_name("tess")).first(connection);
+
+    assert_eq!(Ok(sean), queried_sean);
+    assert_eq!(Ok(tess), queried_tess);
+}
+
+// This test reads query results, which requires reading memory
+// allocated by the native sqlite library. Miri cannot track the
+// provenance of that memory when using `-Zmiri-native-lib`.
+#[cfg(not(miri))]
+#[diesel_test_helper::test]
+fn filter_by_arc_boxed_predicate() {
+    fn by_name(
+        name: &str,
+    ) -> Arc<dyn BoxableExpression<users::table, TestBackend, SqlType = sql_types::Bool>> {
+        Arc::new(lower(users::name).eq(name.to_string()))
+    }
+
+    let connection = &mut connection_with_sean_and_tess_in_users_table();
+    let sean = User::new(1, "Sean");
+    let tess = User::new(2, "Tess");
+    let queried_sean = users::table.filter(by_name("sean")).first(connection);
+    let queried_tess = users::table.filter(by_name("tess")).first(connection);
+
+    assert_eq!(Ok(sean), queried_sean);
+    assert_eq!(Ok(tess), queried_tess);
+}
+
+// This test reads query results, which requires reading memory
+// allocated by the native sqlite library. Miri cannot track the
+// provenance of that memory when using `-Zmiri-native-lib`.
+#[cfg(not(miri))]
+#[diesel_test_helper::test]
 fn filter_like_nullable_column() {
     use crate::schema::users::dsl::*;
 
@@ -445,7 +620,11 @@ fn filter_like_nullable_column() {
     assert_eq!(expected, data);
 }
 
-#[test]
+// This test reads query results, which requires reading memory
+// allocated by the native sqlite library. Miri cannot track the
+// provenance of that memory when using `-Zmiri-native-lib`.
+#[cfg(not(miri))]
+#[diesel_test_helper::test]
 fn filter_subselect_referencing_outer_table() {
     use diesel::dsl::exists;
 
@@ -478,7 +657,11 @@ fn filter_subselect_referencing_outer_table() {
     assert_eq!(expected, users_with_published_posts);
 }
 
-#[test]
+// This test reads query results, which requires reading memory
+// allocated by the native sqlite library. Miri cannot track the
+// provenance of that memory when using `-Zmiri-native-lib`.
+#[cfg(not(miri))]
+#[diesel_test_helper::test]
 fn filter_subselect_with_boxed_query() {
     use crate::schema::users::dsl::*;
 
@@ -492,10 +675,14 @@ fn filter_subselect_with_boxed_query() {
     assert_eq!(expected, data);
 }
 
-#[test]
+#[diesel_test_helper::test]
 // FIXME: this test shouldn't need to modify schema each run
-#[cfg(not(feature = "mysql"))]
+#[cfg(not(any(feature = "mysql", feature = "mariadb")))]
 // https://github.com/rust-lang/rust/issues/124396
+// This test reads query results, which requires reading memory
+// allocated by the native sqlite library. Miri cannot track the
+// provenance of that memory when using `-Zmiri-native-lib`.
+#[cfg(not(miri))]
 #[allow(unknown_lints, non_local_definitions)]
 fn filter_subselect_with_nullable_column() {
     use crate::schema_dsl::*;
@@ -523,7 +710,7 @@ fn filter_subselect_with_nullable_column() {
     }
     let connection = &mut connection();
 
-    create_table(
+    create_temporary_table(
         "home_worlds",
         (
             integer("id").primary_key().auto_increment(),
@@ -533,7 +720,7 @@ fn filter_subselect_with_nullable_column() {
     .execute(connection)
     .unwrap();
 
-    create_table(
+    create_temporary_table(
         "heroes",
         (
             integer("id").primary_key().auto_increment(),
@@ -605,7 +792,7 @@ fn filter_subselect_with_nullable_column() {
     assert_eq!(query, expected);
 }
 
-#[test]
+#[diesel_test_helper::test]
 #[cfg(feature = "postgres")]
 fn filter_subselect_with_pg_any() {
     let conn = &mut connection_with_sean_and_tess_in_users_table();

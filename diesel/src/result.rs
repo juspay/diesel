@@ -1,8 +1,14 @@
 //! Errors, type aliases, and functions related to working with `Result`.
 
-use std::error::Error as StdError;
-use std::ffi::NulError;
-use std::fmt::{self, Display};
+use alloc::boxed::Box;
+use alloc::ffi::NulError;
+use alloc::string::String;
+use alloc::string::ToString;
+use core::error::Error as StdError;
+use core::fmt::{self, Display};
+
+#[doc(inline)]
+pub use sqlstate::{InvalidSqlState, SqlState, SqlStateClass};
 
 #[derive(Debug)]
 #[allow(clippy::enum_variant_names)]
@@ -94,9 +100,15 @@ pub enum Error {
 
     /// Transaction manager broken, likely due to a broken connection. No other operations are possible.
     BrokenTransactionManager,
+
+    /// Internal integer conversion failed
+    IntegerConversion(core::num::TryFromIntError),
+
+    /// Closing a handle failed
+    ClosingHandle(&'static str),
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, PartialEq, Clone, Copy)]
 /// The kind of database error that occurred.
 ///
 /// This is not meant to exhaustively cover all possible errors, but is used to
@@ -106,16 +118,16 @@ pub enum Error {
 #[non_exhaustive]
 pub enum DatabaseErrorKind {
     /// A unique constraint was violated.
-    UniqueViolation,
+    UniqueViolation = 0,
 
     /// A foreign key constraint was violated.
-    ForeignKeyViolation,
+    ForeignKeyViolation = 1,
 
     /// The query could not be sent to the database due to a protocol violation.
     ///
     /// An example of a case where this would occur is if you attempted to send
     /// a query with more than 65000 bind parameters using PostgreSQL.
-    UnableToSendCommand,
+    UnableToSendCommand = 2,
 
     /// A serializable transaction failed to commit due to a read/write
     /// dependency on a concurrent transaction.
@@ -124,35 +136,35 @@ pub enum DatabaseErrorKind {
     ///
     /// This error is only detected for PostgreSQL, as we do not yet support
     /// transaction isolation levels for other backends.
-    SerializationFailure,
+    SerializationFailure = 3,
 
     /// The command could not be completed because the transaction was read
     /// only.
     ///
     /// This error will also be returned for `SELECT` statements which attempted
     /// to lock the rows.
-    ReadOnlyTransaction,
+    ReadOnlyTransaction = 4,
 
     /// A restrict constraint was violated.
-    RestrictViolation,
+    RestrictViolation = 9,
 
     /// A not null constraint was violated.
-    NotNullViolation,
+    NotNullViolation = 5,
 
     /// A check constraint was violated.
-    CheckViolation,
+    CheckViolation = 6,
 
     /// An exclusion constraint was violated.
-    ExclusionViolation,
+    ExclusionViolation = 10,
 
     /// The connection to the server was unexpectedly closed.
     ///
     /// This error is only detected for PostgreSQL and is emitted on a best-effort basis
     /// and may be missed.
-    ClosedConnection,
+    ClosedConnection = 7,
 
     #[doc(hidden)]
-    Unknown, // Match against _ instead, more variants may be added in the future
+    Unknown = 8, // Match against _ instead, more variants may be added in the future
 }
 
 /// Information about an error that was returned by the database.
@@ -194,6 +206,20 @@ pub trait DatabaseErrorInformation {
     /// An optional integer indicating an error cursor position as an index into
     /// the original statement string.
     fn statement_position(&self) -> Option<i32>;
+
+    /// The [`SqlState`] of the error, if the connection reports one.
+    ///
+    /// Which errors carry a code is documented by each connection.
+    fn sqlstate(&self) -> Option<SqlState> {
+        None
+    }
+
+    /// The native error code of the error, if the connection reports one.
+    ///
+    /// What the code means is documented by each connection.
+    fn native_code(&self) -> Option<i32> {
+        None
+    }
 }
 
 impl fmt::Debug for dyn DatabaseErrorInformation + Send + Sync {
@@ -223,6 +249,36 @@ impl DatabaseErrorInformation for String {
     }
     fn statement_position(&self) -> Option<i32> {
         None
+    }
+}
+
+impl DatabaseErrorInformation for core::convert::Infallible {
+    fn message(&self) -> &str {
+        match *self {}
+    }
+
+    fn details(&self) -> Option<&str> {
+        match *self {}
+    }
+
+    fn hint(&self) -> Option<&str> {
+        match *self {}
+    }
+
+    fn table_name(&self) -> Option<&str> {
+        match *self {}
+    }
+
+    fn column_name(&self) -> Option<&str> {
+        match *self {}
+    }
+
+    fn constraint_name(&self) -> Option<&str> {
+        match *self {}
+    }
+
+    fn statement_position(&self) -> Option<i32> {
+        match *self {}
     }
 }
 
@@ -274,7 +330,7 @@ pub trait OptionalExtension<T> {
     /// # Example
     ///
     /// ```rust
-    /// use diesel::{QueryResult, NotFound, OptionalExtension};
+    /// use diesel::{NotFound, OptionalExtension, QueryResult};
     ///
     /// let result: QueryResult<i32> = Ok(1);
     /// assert_eq!(Ok(Some(1)), result.optional());
@@ -303,7 +359,10 @@ pub trait OptionalEmptyChangesetExtension<T> {
     /// # Example
     ///
     /// ```rust
-    /// use diesel::{QueryResult, OptionalEmptyChangesetExtension, result::Error::QueryBuilderError, result::EmptyChangeset};
+    /// use diesel::{
+    ///     result::EmptyChangeset, result::Error::QueryBuilderError, OptionalEmptyChangesetExtension,
+    ///     QueryResult,
+    /// };
     /// let result: QueryResult<i32> = Err(QueryBuilderError(Box::new(EmptyChangeset)));
     /// assert_eq!(Ok(None), result.optional_empty_changeset());
     /// ```
@@ -347,9 +406,8 @@ impl Display for Error {
             } => {
                 write!(
                     f,
-                    "Transaction rollback failed: {} \
-                        (rollback attempted because of failure to commit: {})",
-                    &**rollback_error, &**commit_error
+                    "Transaction rollback failed: {rollback_error} \
+                        (rollback attempted because of failure to commit: {commit_error})",
                 )?;
                 Ok(())
             }
@@ -364,17 +422,22 @@ impl Display for Error {
             Error::NotInTransaction => {
                 write!(f, "Cannot perform this operation outside of a transaction",)
             }
+            Error::IntegerConversion(_) => f.write_str("Internal integer conversion failed"),
+            Error::ClosingHandle(message) => {
+                write!(f, "Error closing SQLite blob: {message}")
+            }
         }
     }
 }
 
 impl StdError for Error {
-    fn cause(&self) -> Option<&dyn StdError> {
+    fn source(&self) -> Option<&(dyn StdError + 'static)> {
         match *self {
-            Error::InvalidCString(ref e) => Some(e),
-            Error::QueryBuilderError(ref e) => Some(&**e),
-            Error::DeserializationError(ref e) => Some(&**e),
-            Error::SerializationError(ref e) => Some(&**e),
+            Error::InvalidCString(ref e) => e.source(),
+            Error::QueryBuilderError(ref e) => e.source(),
+            Error::DeserializationError(ref e) => e.source(),
+            Error::SerializationError(ref e) => e.source(),
+            Error::IntegerConversion(ref e) => Some(e),
             _ => None,
         }
     }
@@ -392,10 +455,10 @@ impl Display for ConnectionError {
 }
 
 impl StdError for ConnectionError {
-    fn cause(&self) -> Option<&dyn StdError> {
+    fn source(&self) -> Option<&(dyn StdError + 'static)> {
         match *self {
-            ConnectionError::InvalidCString(ref e) => Some(e),
-            ConnectionError::CouldntSetupConfiguration(ref e) => Some(e),
+            ConnectionError::InvalidCString(ref e) => e.source(),
+            ConnectionError::CouldntSetupConfiguration(ref e) => e.source(),
             _ => None,
         }
     }
@@ -419,6 +482,13 @@ impl PartialEq for Error {
 fn error_impls_send() {
     let err: Error = unimplemented!();
     let x: &dyn Send = &err;
+}
+
+#[cfg(test)]
+#[allow(warnings)]
+fn infallible_impls_database_error_information() {
+    let err: core::convert::Infallible = unimplemented!();
+    let x: &dyn DatabaseErrorInformation = &err;
 }
 
 /// An unexpected `NULL` was encountered during deserialization
@@ -489,7 +559,7 @@ pub struct DeserializeFieldError {
 
 impl DeserializeFieldError {
     #[cold]
-    pub(crate) fn new<'a, F, DB>(field: F, error: Box<dyn std::error::Error + Send + Sync>) -> Self
+    pub(crate) fn new<'a, F, DB>(field: F, error: Box<dyn core::error::Error + Send + Sync>) -> Self
     where
         DB: crate::backend::Backend,
         F: crate::row::Field<'a, DB>,
@@ -510,13 +580,9 @@ impl StdError for DeserializeFieldError {
 impl fmt::Display for DeserializeFieldError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         if let Some(ref field_name) = self.field_name {
-            write!(
-                f,
-                "Error deserializing field '{}': {}",
-                field_name, self.error
-            )
+            write!(f, "Error deserializing field '{field_name}'")
         } else {
-            write!(f, "Error deserializing field: {}", self.error)
+            f.write_str("Error deserializing field")
         }
     }
 }

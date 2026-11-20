@@ -3,7 +3,7 @@ use crate::query_builder::combination_clause::{
     All, CombinationClause, Distinct, Except, Intersect, Union,
 };
 use crate::query_builder::{AsQuery, Query};
-use crate::Table;
+use crate::query_source::QueryRelation;
 
 /// Extension trait to combine queries using a combinator like `UNION`, `INTERSECT` or `EXCEPT`
 /// with or without `ALL` rule for duplicates
@@ -20,12 +20,22 @@ pub trait CombineDsl {
     /// # use schema::{users, animals};
     /// # use crate::diesel::query_dsl::positional_order_dsl::PositionalOrderDsl;
     /// #
+    /// # // Reading the query result requires reading memory allocated by the
+    /// # // native sqlite library, which miri cannot track provenance for.
+    /// # #[cfg(miri)]
+    /// # fn main() {}
+    /// # #[cfg(not(miri))]
     /// # fn main() {
     /// #     use self::users::dsl::{users, name as user_name};
     /// #     use self::animals::dsl::{animals, name as animal_name};
     /// #     let connection = &mut establish_connection();
-    /// let data = users.select(user_name.nullable())
-    ///     .union(animals.select(animal_name).filter(animal_name.is_not_null()))
+    /// let data = users
+    ///     .select(user_name.nullable())
+    ///     .union(
+    ///         animals
+    ///             .select(animal_name)
+    ///             .filter(animal_name.is_not_null()),
+    ///     )
     /// #   .positional_order_by(1)
     ///     .load(connection);
     ///
@@ -67,7 +77,7 @@ pub trait CombineDsl {
         Rhs: AsQuery<SqlType = <Self::Query as Query>::SqlType>;
 }
 
-impl<T: Table> CombineDsl for T {
+impl<T: QueryRelation> CombineDsl for T {
     type Query = T::Query;
 
     fn union<Rhs>(self, rhs: Rhs) -> dsl::Union<Self, Rhs>

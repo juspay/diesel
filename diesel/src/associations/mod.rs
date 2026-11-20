@@ -24,6 +24,11 @@
 //!     title: String,
 //! }
 //!
+//! # // Reading the query result requires reading memory allocated by the
+//! # // native sqlite library, which miri cannot track provenance for.
+//! # #[cfg(miri)]
+//! # fn main() {}
+//! # #[cfg(not(miri))]
 //! # fn main() {
 //! #     run_test().unwrap();
 //! # }
@@ -32,9 +37,12 @@
 //! #     let connection = &mut establish_connection();
 //! #     use self::users::dsl::*;
 //! let user = users.find(2).get_result::<User>(connection)?;
-//! let users_post = Post::belonging_to(&user)
-//!     .first(connection)?;
-//! let expected = Post { id: 3, user_id: 2, title: "My first post too".into() };
+//! let users_post = Post::belonging_to(&user).first(connection)?;
+//! let expected = Post {
+//!     id: 3,
+//!     user_id: 2,
+//!     title: "My first post too".into(),
+//! };
 //! assert_eq!(expected, users_post);
 //! #     Ok(())
 //! # }
@@ -113,17 +121,33 @@
 //! #     title: String,
 //! # }
 //! #
+//! # // Reading the query result requires reading memory allocated by the
+//! # // native sqlite library, which miri cannot track provenance for.
+//! # #[cfg(miri)]
+//! # fn main() {}
+//! # #[cfg(not(miri))]
 //! # fn main() {
 //! #   use self::users::dsl::*;
 //! #   let connection = &mut establish_connection();
 //! #
-//! let user = users.find(1).first::<User>(connection).expect("Error loading user");
+//! let user = users
+//!     .find(1)
+//!     .first::<User>(connection)
+//!     .expect("Error loading user");
 //! let post_list = Post::belonging_to(&user)
 //!     .load::<Post>(connection)
 //!     .expect("Error loading posts");
 //! let expected = vec![
-//!     Post { id: 1, user_id: 1, title: "My first post".to_string() },
-//!     Post { id: 2, user_id: 1, title: "About Rust".to_string() },
+//!     Post {
+//!         id: 1,
+//!         user_id: 1,
+//!         title: "My first post".to_string(),
+//!     },
+//!     Post {
+//!         id: 2,
+//!         user_id: 1,
+//!         title: "About Rust".to_string(),
+//!     },
 //! ];
 //!
 //! assert_eq!(post_list, expected);
@@ -148,49 +172,8 @@
 //! [`grouped_by`]: GroupedBy::grouped_by
 //! [`belonging_to`]: crate::query_dsl::BelongingToDsl::belonging_to
 //!
-//! ```rust
-//! # include!("../doctest_setup.rs");
-//! # use schema::{posts, users};
-//! #
-//! # #[derive(Identifiable, Queryable)]
-//! # pub struct User {
-//! #     id: i32,
-//! #     name: String,
-//! # }
-//! #
-//! # #[derive(Debug, PartialEq)]
-//! # #[derive(Identifiable, Queryable, Associations)]
-//! # #[diesel(belongs_to(User))]
-//! # pub struct Post {
-//! #     id: i32,
-//! #     user_id: i32,
-//! #     title: String,
-//! # }
-//! #
-//! # fn main() {
-//! #     run_test();
-//! # }
-//! #
-//! # fn run_test() -> QueryResult<()> {
-//! #     let connection = &mut establish_connection();
-//! #     use self::users::dsl::*;
-//! #     use self::posts::dsl::{posts, title};
-//! let sean = users.filter(name.eq("Sean")).first::<User>(connection)?;
-//! let tess = users.filter(name.eq("Tess")).first::<User>(connection)?;
-//!
-//! let seans_posts = Post::belonging_to(&sean)
-//!     .select(title)
-//!     .load::<String>(connection)?;
-//! assert_eq!(vec!["My first post", "About Rust"], seans_posts);
-//!
-//! // A vec or slice can be passed as well
-//! let more_posts = Post::belonging_to(&vec![sean, tess])
-//!     .select(title)
-//!     .load::<String>(connection)?;
-//! assert_eq!(vec!["My first post", "About Rust", "My first post too"], more_posts);
-//! #     Ok(())
-//! # }
-//! ```
+//! [`belonging_to`] accepts a single parent or a collection of them,
+//! and its documentation carries a runnable example.
 //!
 //! Typically you will want to group up the children with their parents.
 //! In other ORMs, this is often called a `has_many` relationship.
@@ -202,57 +185,7 @@
 //! Or to put it another way, the returned data can be passed to `zip`,
 //! and it will be combined with its parent.
 //!
-//! ```rust
-//! # include!("../doctest_setup.rs");
-//! # use schema::{posts, users};
-//! #
-//! # #[derive(Identifiable, Queryable, PartialEq, Debug)]
-//! # pub struct User {
-//! #     id: i32,
-//! #     name: String,
-//! # }
-//! #
-//! # #[derive(Debug, PartialEq)]
-//! # #[derive(Identifiable, Queryable, Associations)]
-//! # #[diesel(belongs_to(User))]
-//! # pub struct Post {
-//! #     id: i32,
-//! #     user_id: i32,
-//! #     title: String,
-//! # }
-//! #
-//! # fn main() {
-//! #     run_test();
-//! # }
-//! #
-//! # fn run_test() -> QueryResult<()> {
-//! #     let connection = &mut establish_connection();
-//! let users = users::table.load::<User>(connection)?;
-//! let posts = Post::belonging_to(&users)
-//!     .load::<Post>(connection)?
-//!     .grouped_by(&users);
-//! let data = users.into_iter().zip(posts).collect::<Vec<_>>();
-//!
-//! let expected_data = vec![
-//!     (
-//!         User { id: 1, name: "Sean".into() },
-//!         vec![
-//!             Post { id: 1, user_id: 1, title: "My first post".into() },
-//!             Post { id: 2, user_id: 1, title: "About Rust".into() },
-//!         ],
-//!     ),
-//!     (
-//!         User { id: 2, name: "Tess".into() },
-//!         vec![
-//!             Post { id: 3, user_id: 2, title: "My first post too".into() },
-//!         ],
-//!     ),
-//! ];
-//!
-//! assert_eq!(expected_data, data);
-//! #     Ok(())
-//! # }
-//! ```
+//! A runnable example lives on [`GroupedBy`].
 //!
 //! [`grouped_by`] can be called multiple times
 //! if you have multiple children or grandchildren.
@@ -289,10 +222,16 @@
 //! #     body: String,
 //! # }
 //! #
+//! # // Reading the query result requires reading memory allocated by the
+//! # // native sqlite library, which miri cannot track provenance for.
+//! # #[cfg(miri)]
+//! # fn main() {}
+//! # #[cfg(not(miri))]
 //! # fn main() {
 //! #   let connection = &mut establish_connection();
 //! #
-//! let users: Vec<User> = users::table.load::<User>(connection)
+//! let users: Vec<User> = users::table
+//!     .load::<User>(connection)
 //!     .expect("error loading users");
 //! let posts: Vec<Post> = Post::belonging_to(&users)
 //!     .load::<Post>(connection)
@@ -301,40 +240,61 @@
 //!     .load::<Comment>(connection)
 //!     .expect("Error loading comments");
 //! let grouped_comments: Vec<Vec<Comment>> = comments.grouped_by(&posts);
-//! let posts_and_comments: Vec<Vec<(Post, Vec<Comment>)>> = posts
-//!     .into_iter()
-//!     .zip(grouped_comments)
-//!     .grouped_by(&users);
-//! let result: Vec<(User, Vec<(Post, Vec<Comment>)>)> = users
-//!     .into_iter()
-//!     .zip(posts_and_comments)
-//!     .collect();
+//! let posts_and_comments: Vec<Vec<(Post, Vec<Comment>)>> =
+//!     posts.into_iter().zip(grouped_comments).grouped_by(&users);
+//! let result: Vec<(User, Vec<(Post, Vec<Comment>)>)> =
+//!     users.into_iter().zip(posts_and_comments).collect();
 //! let expected = vec![
 //!     (
-//!         User { id: 1, name: "Sean".to_string() },
+//!         User {
+//!             id: 1,
+//!             name: "Sean".to_string(),
+//!         },
 //!         vec![
 //!             (
-//!                 Post { id: 1, user_id: 1, title: "My first post".to_string() },
-//!                 vec![ Comment { id: 1, post_id: 1, body: "Great post".to_string() } ]
+//!                 Post {
+//!                     id: 1,
+//!                     user_id: 1,
+//!                     title: "My first post".to_string(),
+//!                 },
+//!                 vec![Comment {
+//!                     id: 1,
+//!                     post_id: 1,
+//!                     body: "Great post".to_string(),
+//!                 }],
 //!             ),
 //!             (
-//!                 Post { id: 2, user_id: 1, title: "About Rust".to_string() },
-//!                 vec![
-//!                     Comment { id: 2, post_id: 2, body: "Yay! I am learning Rust".to_string() }
-//!                 ]
-//!
-//!             )
-//!         ]
+//!                 Post {
+//!                     id: 2,
+//!                     user_id: 1,
+//!                     title: "About Rust".to_string(),
+//!                 },
+//!                 vec![Comment {
+//!                     id: 2,
+//!                     post_id: 2,
+//!                     body: "Yay! I am learning Rust".to_string(),
+//!                 }],
+//!             ),
+//!         ],
 //!     ),
 //!     (
-//!         User { id: 2, name: "Tess".to_string() },
-//!         vec![
-//!             (
-//!                 Post { id: 3, user_id: 2, title: "My first post too".to_string() },
-//!                 vec![ Comment { id: 3, post_id: 3, body: "I enjoyed your post".to_string() } ]
-//!             )
-//!         ]
-//!     )
+//!         User {
+//!             id: 2,
+//!             name: "Tess".to_string(),
+//!         },
+//!         vec![(
+//!             Post {
+//!                 id: 3,
+//!                 user_id: 2,
+//!                 title: "My first post too".to_string(),
+//!             },
+//!             vec![Comment {
+//!                 id: 3,
+//!                 post_id: 3,
+//!                 body: "I enjoyed your post".to_string(),
+//!             }],
+//!         )],
+//!     ),
 //! ];
 //!
 //! assert_eq!(result, expected);
@@ -348,11 +308,11 @@
 //! be used to construct the complex behavior applications need.
 mod belongs_to;
 
-use std::hash::Hash;
+use core::hash::Hash;
 
 use crate::query_source::Table;
 
-pub use self::belongs_to::{BelongsTo, GroupedBy};
+pub use self::belongs_to::{BelongsTo, GroupedBy, TryGroupedByError};
 
 #[doc(inline)]
 pub use diesel_derives::Associations;
@@ -377,6 +337,84 @@ impl<T: HasTable> HasTable for &T {
     }
 }
 
+impl<T: HasTable> HasTable for Option<T> {
+    type Table = T::Table;
+
+    fn table() -> Self::Table {
+        T::table()
+    }
+}
+
+impl<T: HasTable> HasTable for alloc::boxed::Box<T> {
+    type Table = T::Table;
+
+    fn table() -> Self::Table {
+        T::table()
+    }
+}
+
+impl<T: HasTable> HasTable for alloc::rc::Rc<T> {
+    type Table = T::Table;
+
+    fn table() -> Self::Table {
+        T::table()
+    }
+}
+
+impl<T: HasTable> HasTable for alloc::sync::Arc<T> {
+    type Table = T::Table;
+
+    fn table() -> Self::Table {
+        T::table()
+    }
+}
+
+// Implement HasTable for tuples of types which implement `HasTable` for
+// the same table.
+// This is useful for multi-column constraints like composite foreign keys.
+//
+// For example:
+// ```rust,ignore
+// // Given a table with columns (id, name)
+// type UserTable = <(users::id, users::name) as HasTable>::Table;
+// let table = <(users::id, users::name)>::table();
+// ```
+
+impl<T> HasTable for (T,)
+where
+    T: HasTable,
+{
+    type Table = T::Table;
+
+    fn table() -> Self::Table {
+        T::table()
+    }
+}
+
+macro_rules! has_table_tuples {
+    ($(
+        $Tuple:tt {
+            $(($idx:tt) -> $T:ident, $ST:ident, $TT:ident,)*
+        }
+    )+) => {
+        $(
+            impl<_T, $($T),*> HasTable for (_T, $($T),*)
+            where
+                _T: HasTable,
+                $($T: HasTable<Table = _T::Table>,)*
+            {
+                type Table = _T::Table;
+
+                fn table() -> Self::Table {
+                    _T::table()
+                }
+            }
+        )+
+    };
+}
+
+crate::for_each_tuple!(has_table_tuples);
+
 /// This trait indicates that a struct represents a single row in a database table.
 ///
 /// This must be implemented to use associations.
@@ -386,7 +424,6 @@ impl<T: HasTable> HasTable for &T {
 ///
 /// This trait is usually implemented on a reference to a struct,
 /// not on the struct itself. It can be [derived](derive@Identifiable).
-///
 pub trait Identifiable: HasTable {
     /// The type of this struct's identifier.
     ///

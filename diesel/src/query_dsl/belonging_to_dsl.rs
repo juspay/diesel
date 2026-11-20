@@ -21,6 +21,11 @@
 /// #     title: String,
 /// # }
 /// #
+/// # // Reading the query result requires reading memory allocated by the
+/// # // native sqlite library, which miri cannot track provenance for.
+/// # #[cfg(miri)]
+/// # fn main() {}
+/// # #[cfg(not(miri))]
 /// # fn main() {
 /// #     run_test();
 /// # }
@@ -41,7 +46,10 @@
 /// let more_posts = Post::belonging_to(&vec![sean, tess])
 ///     .select(title)
 ///     .load::<String>(connection)?;
-/// assert_eq!(vec!["My first post", "About Rust", "My first post too"], more_posts);
+/// assert_eq!(
+///     vec!["My first post", "About Rust", "My first post too"],
+///     more_posts
+/// );
 /// #     Ok(())
 /// # }
 /// ```

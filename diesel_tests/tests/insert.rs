@@ -1,9 +1,18 @@
 use super::schema::*;
+use diesel::sql_types::Text;
 use diesel::*;
+#[cfg(any(feature = "mysql", feature = "mariadb"))]
+use std::num::NonZeroU64;
+use std::rc::Rc;
+use std::sync::Arc;
 
-#[test]
+// This test reads query results, which requires reading memory
+// allocated by the native sqlite library. Miri cannot track the
+// provenance of that memory when using `-Zmiri-native-lib`.
+#[cfg(not(miri))]
+#[diesel_test_helper::test]
 fn insert_records() {
-    use crate::schema::users::table as users;
+    use crate::schema::users::{id, table as users};
     let connection = &mut connection();
     let new_users: &[_] = &[
         NewUser::new("Sean", Some("Black")),
@@ -14,7 +23,7 @@ fn insert_records() {
         .values(new_users)
         .execute(connection)
         .unwrap();
-    let actual_users = users.load::<User>(connection).unwrap();
+    let actual_users = users.order(id).load::<User>(connection).unwrap();
 
     let expected_users = vec![
         User {
@@ -31,9 +40,173 @@ fn insert_records() {
     assert_eq!(expected_users, actual_users);
 }
 
-#[test]
-fn insert_records_as_vec() {
+// This test reads query results, which requires reading memory
+// allocated by the native sqlite library. Miri cannot track the
+// provenance of that memory when using `-Zmiri-native-lib`.
+#[cfg(not(miri))]
+#[diesel_test_helper::test]
+fn insert_rc_string_records() {
     use crate::schema::users::table as users;
+    let connection = &mut connection();
+    let new_users: &[_] = &[
+        NewUserRcString {
+            name: Rc::new("Sean".to_string()),
+            hair_color: Some(Rc::new("Black".to_string())),
+        },
+        NewUserRcString {
+            name: Rc::new("Tess".to_string()),
+            hair_color: None,
+        },
+    ];
+
+    insert_into(users)
+        .values(new_users)
+        .execute(connection)
+        .unwrap();
+    let actual_users = users.load::<UserRcString>(connection).unwrap();
+
+    let expected_users = vec![
+        UserRcString {
+            id: actual_users[0].id,
+            name: Rc::new("Sean".to_string()),
+            hair_color: Some(Rc::new("Black".to_string())),
+        },
+        UserRcString {
+            id: actual_users[1].id,
+            name: Rc::new("Tess".to_string()),
+            hair_color: None,
+        },
+    ];
+    assert_eq!(expected_users, actual_users);
+}
+
+// This test reads query results, which requires reading memory
+// allocated by the native sqlite library. Miri cannot track the
+// provenance of that memory when using `-Zmiri-native-lib`.
+#[cfg(not(miri))]
+#[diesel_test_helper::test]
+fn insert_rc_str_records() {
+    use crate::schema::users::table as users;
+    let connection = &mut connection();
+    let new_users: &[_] = &[
+        NewUserRcStr {
+            name: Rc::from("Sean"),
+            hair_color: Some(Rc::from("Black")),
+        },
+        NewUserRcStr {
+            name: Rc::from("Tess"),
+            hair_color: None,
+        },
+    ];
+
+    insert_into(users)
+        .values(new_users)
+        .execute(connection)
+        .unwrap();
+    let actual_users = users.load::<UserRcStr>(connection).unwrap();
+
+    let expected_users = vec![
+        UserRcStr {
+            id: actual_users[0].id,
+            name: Rc::from("Sean"),
+            hair_color: Some(Rc::from("Black")),
+        },
+        UserRcStr {
+            id: actual_users[1].id,
+            name: Rc::from("Tess"),
+            hair_color: None,
+        },
+    ];
+    assert_eq!(expected_users, actual_users);
+}
+
+// This test reads query results, which requires reading memory
+// allocated by the native sqlite library. Miri cannot track the
+// provenance of that memory when using `-Zmiri-native-lib`.
+#[cfg(not(miri))]
+#[diesel_test_helper::test]
+fn insert_arc_str_records() {
+    use crate::schema::users::table as users;
+    let connection = &mut connection();
+    let new_users: &[_] = &[
+        NewUserArcStr {
+            name: Arc::from("Sean"),
+            hair_color: Some(Arc::from("Black")),
+        },
+        NewUserArcStr {
+            name: Arc::from("Tess"),
+            hair_color: None,
+        },
+    ];
+
+    insert_into(users)
+        .values(new_users)
+        .execute(connection)
+        .unwrap();
+    let actual_users = users.load::<UserArcStr>(connection).unwrap();
+
+    let expected_users = vec![
+        UserArcStr {
+            id: actual_users[0].id,
+            name: Arc::from("Sean"),
+            hair_color: Some(Arc::from("Black")),
+        },
+        UserArcStr {
+            id: actual_users[1].id,
+            name: Arc::from("Tess"),
+            hair_color: None,
+        },
+    ];
+    assert_eq!(expected_users, actual_users);
+}
+
+// This test reads query results, which requires reading memory
+// allocated by the native sqlite library. Miri cannot track the
+// provenance of that memory when using `-Zmiri-native-lib`.
+#[cfg(not(miri))]
+#[diesel_test_helper::test]
+fn insert_arc_string_records() {
+    use crate::schema::users::table as users;
+    let connection = &mut connection();
+    let new_users: &[_] = &[
+        NewUserArcString {
+            name: Arc::new("Sean".to_string()),
+            hair_color: Some(Arc::new("Black".to_string())),
+        },
+        NewUserArcString {
+            name: Arc::new("Tess".to_string()),
+            hair_color: None,
+        },
+    ];
+
+    insert_into(users)
+        .values(new_users)
+        .execute(connection)
+        .unwrap();
+    let actual_users = users.load::<UserArcString>(connection).unwrap();
+
+    let expected_users = vec![
+        UserArcString {
+            id: actual_users[0].id,
+            name: Arc::new("Sean".to_string()),
+            hair_color: Some(Arc::new("Black".to_string())),
+        },
+        UserArcString {
+            id: actual_users[1].id,
+            name: Arc::new("Tess".to_string()),
+            hair_color: None,
+        },
+    ];
+    assert_eq!(expected_users, actual_users);
+}
+
+// This test reads query results, which requires reading memory
+// allocated by the native sqlite library. Miri cannot track the
+// provenance of that memory when using `-Zmiri-native-lib`.
+#[cfg(not(miri))]
+#[diesel_test_helper::test]
+fn insert_records_as_vec() {
+    use crate::schema::users::{id, table as users};
     let connection = &mut connection();
     let new_users = vec![
         NewUser::new("Sean", Some("Black")),
@@ -44,7 +217,7 @@ fn insert_records_as_vec() {
         .values(new_users)
         .execute(connection)
         .unwrap();
-    let actual_users = users.load::<User>(connection).unwrap();
+    let actual_users = users.order(id).load::<User>(connection).unwrap();
 
     let expected_users = vec![
         User {
@@ -61,9 +234,13 @@ fn insert_records_as_vec() {
     assert_eq!(expected_users, actual_users);
 }
 
-#[test]
+// This test reads query results, which requires reading memory
+// allocated by the native sqlite library. Miri cannot track the
+// provenance of that memory when using `-Zmiri-native-lib`.
+#[cfg(not(miri))]
+#[diesel_test_helper::test]
 fn insert_records_as_static_array() {
-    use crate::schema::users::table as users;
+    use crate::schema::users::{id, table as users};
     let connection = &mut connection();
     let new_users = [
         NewUser::new("Sean", Some("Black")),
@@ -74,7 +251,7 @@ fn insert_records_as_static_array() {
         .values(new_users)
         .execute(connection)
         .unwrap();
-    let actual_users = users.load::<User>(connection).unwrap();
+    let actual_users = users.order(id).load::<User>(connection).unwrap();
 
     let expected_users = vec![
         User {
@@ -91,9 +268,13 @@ fn insert_records_as_static_array() {
     assert_eq!(expected_users, actual_users);
 }
 
-#[test]
+// This test reads query results, which requires reading memory
+// allocated by the native sqlite library. Miri cannot track the
+// provenance of that memory when using `-Zmiri-native-lib`.
+#[cfg(not(miri))]
+#[diesel_test_helper::test]
 fn insert_records_as_static_array_ref() {
-    use crate::schema::users::table as users;
+    use crate::schema::users::{id, table as users};
     let connection = &mut connection();
     let new_users = &[
         NewUser::new("Sean", Some("Black")),
@@ -104,7 +285,7 @@ fn insert_records_as_static_array_ref() {
         .values(new_users)
         .execute(connection)
         .unwrap();
-    let actual_users = users.load::<User>(connection).unwrap();
+    let actual_users = users.order(id).load::<User>(connection).unwrap();
 
     let expected_users = vec![
         User {
@@ -121,9 +302,13 @@ fn insert_records_as_static_array_ref() {
     assert_eq!(expected_users, actual_users);
 }
 
-#[test]
+// This test reads query results, which requires reading memory
+// allocated by the native sqlite library. Miri cannot track the
+// provenance of that memory when using `-Zmiri-native-lib`.
+#[cfg(not(miri))]
+#[diesel_test_helper::test]
 fn insert_records_as_boxed_static_array() {
-    use crate::schema::users::table as users;
+    use crate::schema::users::{id, table as users};
     let connection = &mut connection();
     let new_users = Box::new([
         NewUser::new("Sean", Some("Black")),
@@ -134,7 +319,7 @@ fn insert_records_as_boxed_static_array() {
         .values(new_users)
         .execute(connection)
         .unwrap();
-    let actual_users = users.load::<User>(connection).unwrap();
+    let actual_users = users.order(id).load::<User>(connection).unwrap();
 
     let expected_users = vec![
         User {
@@ -151,8 +336,76 @@ fn insert_records_as_boxed_static_array() {
     assert_eq!(expected_users, actual_users);
 }
 
-#[test]
-#[cfg(all(feature = "sqlite", feature = "returning_clauses_for_sqlite_3_35"))]
+// This test reads query results, which requires reading memory
+// allocated by the native sqlite library. Miri cannot track the
+// provenance of that memory when using `-Zmiri-native-lib`.
+#[cfg(not(miri))]
+#[diesel_test_helper::test]
+fn insert_records_as_rc_static_array() {
+    use crate::schema::users::{id, table as users};
+    let connection = &mut connection();
+    let new_users = Rc::new([
+        NewUser::new("Sean", Some("Black")),
+        NewUser::new("Tess", None),
+    ]);
+
+    insert_into(users)
+        .values(new_users)
+        .execute(connection)
+        .unwrap();
+    let actual_users = users.order(id).load::<User>(connection).unwrap();
+
+    let expected_users = vec![
+        User {
+            id: actual_users[0].id,
+            name: "Sean".to_string(),
+            hair_color: Some("Black".to_string()),
+        },
+        User {
+            id: actual_users[1].id,
+            name: "Tess".to_string(),
+            hair_color: None,
+        },
+    ];
+    assert_eq!(expected_users, actual_users);
+}
+
+// This test reads query results, which requires reading memory
+// allocated by the native sqlite library. Miri cannot track the
+// provenance of that memory when using `-Zmiri-native-lib`.
+#[cfg(not(miri))]
+#[diesel_test_helper::test]
+fn insert_records_as_arc_static_array() {
+    use crate::schema::users::{id, table as users};
+    let connection = &mut connection();
+    let new_users = Arc::new([
+        NewUser::new("Sean", Some("Black")),
+        NewUser::new("Tess", None),
+    ]);
+
+    insert_into(users)
+        .values(new_users)
+        .execute(connection)
+        .unwrap();
+    let actual_users = users.order(id).load::<User>(connection).unwrap();
+
+    let expected_users = vec![
+        User {
+            id: actual_users[0].id,
+            name: "Sean".to_string(),
+            hair_color: Some("Black".to_string()),
+        },
+        User {
+            id: actual_users[1].id,
+            name: "Tess".to_string(),
+            hair_color: None,
+        },
+    ];
+    assert_eq!(expected_users, actual_users);
+}
+
+#[diesel_test_helper::test]
+#[cfg(feature = "returning_clauses_for_sqlite_3_35")]
 fn insert_record_using_returning_clause() {
     use crate::schema::users::table as users;
     let connection = &mut connection();
@@ -171,8 +424,8 @@ fn insert_record_using_returning_clause() {
     assert_eq!(expected_user, inserted_user);
 }
 
-#[test]
-#[cfg(all(feature = "sqlite", feature = "returning_clauses_for_sqlite_3_35"))]
+#[diesel_test_helper::test]
+#[cfg(feature = "returning_clauses_for_sqlite_3_35")]
 fn insert_record_attached_database_using_returning_clause() {
     table! {
         external.external_table (id) {
@@ -218,8 +471,11 @@ fn insert_record_attached_database_using_returning_clause() {
     assert_eq!(expected_entity, inserted_entity);
 }
 
-#[test]
-#[cfg(not(any(feature = "sqlite", feature = "mysql")))]
+#[diesel_test_helper::test]
+#[cfg(not(any(
+    all(feature = "sqlite", not(feature = "returning_clauses_for_sqlite_3_35")),
+    feature = "mysql"
+)))]
 fn insert_records_using_returning_clause() {
     use crate::schema::users::table as users;
     let connection = &mut connection();
@@ -248,8 +504,8 @@ fn insert_records_using_returning_clause() {
     assert_eq!(expected_users, inserted_users);
 }
 
-#[test]
-#[cfg(all(feature = "sqlite", feature = "returning_clauses_for_sqlite_3_35"))]
+#[diesel_test_helper::test]
+#[cfg(feature = "returning_clauses_for_sqlite_3_35")]
 fn insert_record_with_custom_returning_clause() {
     use crate::schema::users::dsl::*;
 
@@ -266,8 +522,12 @@ fn insert_record_with_custom_returning_clause() {
     assert_eq!(expected_user, inserted_user);
 }
 
-#[test]
-#[cfg(not(any(feature = "sqlite", feature = "mysql")))]
+// on SQLite also a regression test for https://github.com/diesel-rs/diesel/issues/4989
+#[diesel_test_helper::test]
+#[cfg(any(
+    not(any(feature = "sqlite", feature = "mysql")),
+    feature = "returning_clauses_for_sqlite_3_35"
+))]
 fn insert_records_with_custom_returning_clause() {
     use crate::schema::users::dsl::*;
 
@@ -290,15 +550,39 @@ fn insert_records_with_custom_returning_clause() {
     assert_eq!(expected_users, inserted_users);
 }
 
-#[test]
-#[cfg(not(feature = "mysql"))] // FIXME: Figure out how to handle tests that modify schema
+// regression test for https://github.com/diesel-rs/diesel/issues/4989
+#[diesel_test_helper::test]
+#[cfg(feature = "returning_clauses_for_sqlite_3_35")]
+fn batch_insert_with_returning_id_sqlite() {
+    use crate::schema::users::dsl::*;
+
+    let connection = &mut connection();
+    let new_users: &[_] = &[
+        NewUser::new("Sean", Some("Black")),
+        NewUser::new("Tess", None),
+        NewUser::new("Jim", Some("Brown")),
+    ];
+
+    let inserted_ids = insert_into(users)
+        .values(new_users)
+        .returning(id)
+        .get_results::<i32>(connection)
+        .unwrap();
+
+    assert_eq!(inserted_ids.len(), 3);
+}
+
+// This test reads query results, which requires reading memory
+// allocated by the native sqlite library. Miri cannot track the
+// provenance of that memory when using `-Zmiri-native-lib`.
+#[cfg(not(miri))]
+#[diesel_test_helper::test]
 fn batch_insert_with_defaults() {
     use crate::schema::users::table as users;
     use crate::schema_dsl::*;
 
     let connection = &mut connection();
-    drop_table_cascade(connection, "users");
-    create_table(
+    create_temporary_table(
         "users",
         (
             integer("id").primary_key().auto_increment(),
@@ -335,15 +619,17 @@ fn batch_insert_with_defaults() {
     assert_eq!(expected_users, actual_users);
 }
 
-#[test]
-#[cfg(not(feature = "mysql"))] // FIXME: Figure out how to handle tests that modify schema
+// This test reads query results, which requires reading memory
+// allocated by the native sqlite library. Miri cannot track the
+// provenance of that memory when using `-Zmiri-native-lib`.
+#[cfg(not(miri))]
+#[diesel_test_helper::test]
 fn insert_with_defaults() {
     use crate::schema::users::table as users;
     use crate::schema_dsl::*;
 
     let connection = &mut connection();
-    drop_table_cascade(connection, "users");
-    create_table(
+    create_temporary_table(
         "users",
         (
             integer("id").primary_key().auto_increment(),
@@ -368,15 +654,17 @@ fn insert_with_defaults() {
     assert_eq!(expected_users, actual_users);
 }
 
-#[test]
-#[cfg(not(feature = "mysql"))] // FIXME: Figure out how to handle tests that modify schema
+// This test reads query results, which requires reading memory
+// allocated by the native sqlite library. Miri cannot track the
+// provenance of that memory when using `-Zmiri-native-lib`.
+#[cfg(not(miri))]
+#[diesel_test_helper::test]
 fn insert_in_nullable_with_non_null_default() {
     use crate::schema::users::table as users;
     use crate::schema_dsl::*;
 
     let connection = &mut connection();
-    drop_table_cascade(connection, "users");
-    create_table(
+    create_temporary_table(
         "users",
         (
             integer("id").primary_key().auto_increment(),
@@ -414,17 +702,15 @@ fn insert_in_nullable_with_non_null_default() {
     assert_eq!(expected_users, actual_users);
 }
 
-#[test]
-#[cfg(not(feature = "mysql"))] // FIXME: Figure out how to handle tests that modify schema
+#[diesel_test_helper::test]
 fn insert_returning_count_returns_number_of_rows_inserted() {
     use crate::schema::users::table as users;
     let connection = &mut connection();
-    drop_table_cascade(connection, "users");
     diesel::sql_query(
-        "CREATE TABLE users (
+        "CREATE TEMPORARY TABLE users (
         id SERIAL PRIMARY KEY,
-        name VARCHAR NOT NULL,
-        hair_color VARCHAR NOT NULL DEFAULT 'Green'
+        name VARCHAR(50) NOT NULL,
+        hair_color VARCHAR(10) NOT NULL DEFAULT 'Green'
     )",
     )
     .execute(connection)
@@ -452,8 +738,8 @@ fn insert_returning_count_returns_number_of_rows_inserted() {
     assert_eq!(1, second_count);
 }
 
-#[test]
-#[cfg(not(any(feature = "mysql", feature = "sqlite")))]
+#[diesel_test_helper::test]
+#[cfg(not(any(feature = "mysql", feature = "mariadb", feature = "sqlite")))]
 fn insert_with_generated_column() {
     use crate::schema::user_with_last_names::table as users;
     #[derive(Debug, Queryable, Insertable, Selectable, Default)]
@@ -466,7 +752,7 @@ fn insert_with_generated_column() {
 
     let connection = &mut connection();
     diesel::sql_query(
-        "CREATE TABLE user_with_last_names (
+        "CREATE TEMPORARY TABLE user_with_last_names (
         first_name VARCHAR NOT NULL PRIMARY KEY,
         last_name VARCHAR NOT NULL,
         full_name VARCHAR GENERATED ALWAYS AS (first_name || ' ' || last_name) STORED
@@ -503,9 +789,13 @@ struct BorrowedUser<'a> {
     name: &'a str,
 }
 
-#[test]
+// This test reads query results, which requires reading memory
+// allocated by the native sqlite library. Miri cannot track the
+// provenance of that memory when using `-Zmiri-native-lib`.
+#[cfg(not(miri))]
+#[diesel_test_helper::test]
 fn insert_borrowed_content() {
-    use crate::schema::users::table as users;
+    use crate::schema::users::{id, table as users};
     let connection = &mut connection();
     let new_users: &[_] = &[BorrowedUser { name: "Sean" }, BorrowedUser { name: "Tess" }];
     insert_into(users)
@@ -513,7 +803,7 @@ fn insert_borrowed_content() {
         .execute(connection)
         .unwrap();
 
-    let actual_users = users.load::<User>(connection).unwrap();
+    let actual_users = users.order(id).load::<User>(connection).unwrap();
     let expected_users = vec![
         User::new(actual_users[0].id, "Sean"),
         User::new(actual_users[1].id, "Tess"),
@@ -522,7 +812,7 @@ fn insert_borrowed_content() {
     assert_eq!(expected_users, actual_users);
 }
 
-#[test]
+#[diesel_test_helper::test]
 fn insert_empty_slice() {
     let connection = &mut connection();
 
@@ -533,8 +823,8 @@ fn insert_empty_slice() {
     assert_eq!(Ok(0), inserted_records);
 }
 
-#[test]
-#[cfg(feature = "postgres")]
+#[diesel_test_helper::test]
+#[cfg(any(feature = "postgres", feature = "mariadb"))]
 fn insert_empty_slice_with_returning() {
     let connection = &mut connection();
 
@@ -549,8 +839,8 @@ fn insert_empty_slice_with_returning() {
     assert_eq!(Ok(vec![]), insert_all);
 }
 
-#[test]
-#[cfg(any(feature = "postgres", feature = "mysql"))]
+#[diesel_test_helper::test]
+#[cfg(any(feature = "postgres", feature = "mysql", feature = "mariadb"))]
 fn upsert_empty_slice() {
     let connection = &mut connection();
 
@@ -562,19 +852,15 @@ fn upsert_empty_slice() {
     assert_eq!(Ok(0), inserted_records);
 }
 
-#[test]
-#[cfg(any(
-    feature = "postgres",
-    all(feature = "sqlite", feature = "returning_clauses_for_sqlite_3_35")
-))]
+#[diesel_test_helper::test]
+#[cfg(any(feature = "postgres", feature = "returning_clauses_for_sqlite_3_35"))]
 fn insert_only_default_values_with_returning() {
     use crate::schema::users::id;
     use crate::schema::users::table as users;
     use crate::schema_dsl::*;
     let connection = &mut connection();
 
-    drop_table_cascade(connection, "users");
-    create_table(
+    create_temporary_table(
         "users",
         (
             integer("id").primary_key().auto_increment(),
@@ -594,7 +880,11 @@ fn insert_only_default_values_with_returning() {
     assert_eq!(Ok(expected_users), users.load(connection));
 }
 
-#[test]
+// This test reads query results, which requires reading memory
+// allocated by the native sqlite library. Miri cannot track the
+// provenance of that memory when using `-Zmiri-native-lib`.
+#[cfg(not(miri))]
+#[diesel_test_helper::test]
 fn insert_single_bare_value() {
     use crate::schema::users::dsl::*;
     let connection = &mut connection();
@@ -609,7 +899,11 @@ fn insert_single_bare_value() {
     assert_eq!(Ok(expected_names), actual_names);
 }
 
-#[test]
+// This test reads query results, which requires reading memory
+// allocated by the native sqlite library. Miri cannot track the
+// provenance of that memory when using `-Zmiri-native-lib`.
+#[cfg(not(miri))]
+#[diesel_test_helper::test]
 fn insert_single_bare_value_reference() {
     use crate::schema::users::dsl::*;
     let connection = &mut connection();
@@ -624,7 +918,11 @@ fn insert_single_bare_value_reference() {
     assert_eq!(Ok(expected_names), actual_names);
 }
 
-#[test]
+// This test reads query results, which requires reading memory
+// allocated by the native sqlite library. Miri cannot track the
+// provenance of that memory when using `-Zmiri-native-lib`.
+#[cfg(not(miri))]
+#[diesel_test_helper::test]
 fn insert_multiple_bare_values() {
     use crate::schema::users::dsl::*;
     let connection = &mut connection();
@@ -641,7 +939,11 @@ fn insert_multiple_bare_values() {
     assert_eq!(Ok(expected_names), actual_names);
 }
 
-#[test]
+// This test reads query results, which requires reading memory
+// allocated by the native sqlite library. Miri cannot track the
+// provenance of that memory when using `-Zmiri-native-lib`.
+#[cfg(not(miri))]
+#[diesel_test_helper::test]
 fn insert_single_tuple() {
     use crate::schema::users::dsl::*;
     let connection = &mut connection();
@@ -656,7 +958,11 @@ fn insert_single_tuple() {
     assert_eq!(Ok(expected_data), actual_data);
 }
 
-#[test]
+// This test reads query results, which requires reading memory
+// allocated by the native sqlite library. Miri cannot track the
+// provenance of that memory when using `-Zmiri-native-lib`.
+#[cfg(not(miri))]
+#[diesel_test_helper::test]
 fn insert_single_tuple_reference() {
     use crate::schema::users::dsl::*;
     let connection = &mut connection();
@@ -671,7 +977,11 @@ fn insert_single_tuple_reference() {
     assert_eq!(Ok(expected_data), actual_data);
 }
 
-#[test]
+// This test reads query results, which requires reading memory
+// allocated by the native sqlite library. Miri cannot track the
+// provenance of that memory when using `-Zmiri-native-lib`.
+#[cfg(not(miri))]
+#[diesel_test_helper::test]
 fn insert_nested_tuples() {
     use crate::schema::users::dsl::*;
     let connection = &mut connection();
@@ -686,7 +996,11 @@ fn insert_nested_tuples() {
     assert_eq!(Ok(expected_data), actual_data);
 }
 
-#[test]
+// This test reads query results, which requires reading memory
+// allocated by the native sqlite library. Miri cannot track the
+// provenance of that memory when using `-Zmiri-native-lib`.
+#[cfg(not(miri))]
+#[diesel_test_helper::test]
 fn insert_mixed_tuple_and_insertable_struct() {
     use crate::schema::users::dsl::*;
     let connection = &mut connection();
@@ -702,7 +1016,11 @@ fn insert_mixed_tuple_and_insertable_struct() {
     assert_eq!(Ok(expected_data), actual_data);
 }
 
-#[test]
+// This test reads query results, which requires reading memory
+// allocated by the native sqlite library. Miri cannot track the
+// provenance of that memory when using `-Zmiri-native-lib`.
+#[cfg(not(miri))]
+#[diesel_test_helper::test]
 fn insert_multiple_tuples() {
     use crate::schema::users::dsl::*;
     let connection = &mut connection();
@@ -724,7 +1042,11 @@ fn insert_multiple_tuples() {
     assert_eq!(Ok(expected_data), actual_data);
 }
 
-#[test]
+// This test reads query results, which requires reading memory
+// allocated by the native sqlite library. Miri cannot track the
+// provenance of that memory when using `-Zmiri-native-lib`.
+#[cfg(not(miri))]
+#[diesel_test_helper::test]
 fn insert_optional_field_with_null() {
     use crate::schema::users::dsl::*;
     let connection = &mut connection();
@@ -746,14 +1068,16 @@ fn insert_optional_field_with_null() {
     assert_eq!(Ok(expected_data), actual_data);
 }
 
-#[test]
-#[cfg(not(feature = "mysql"))]
+// This test reads query results, which requires reading memory
+// allocated by the native sqlite library. Miri cannot track the
+// provenance of that memory when using `-Zmiri-native-lib`.
+#[cfg(not(miri))]
+#[diesel_test_helper::test]
 fn insert_optional_field_with_default() {
     use crate::schema::users::dsl::*;
     use crate::schema_dsl::*;
     let connection = &mut connection();
-    drop_table_cascade(connection, "users");
-    create_table(
+    create_temporary_table(
         "users",
         (
             integer("id").primary_key().auto_increment(),
@@ -781,14 +1105,16 @@ fn insert_optional_field_with_default() {
     assert_eq!(Ok(expected_data), actual_data);
 }
 
-#[test]
-#[cfg(not(feature = "mysql"))]
+// This test reads query results, which requires reading memory
+// allocated by the native sqlite library. Miri cannot track the
+// provenance of that memory when using `-Zmiri-native-lib`.
+#[cfg(not(miri))]
+#[diesel_test_helper::test]
 fn insert_all_default_fields() {
     use crate::schema::users::dsl::*;
     use crate::schema_dsl::*;
     let connection = &mut connection();
-    drop_table_cascade(connection, "users");
-    create_table(
+    create_temporary_table(
         "users",
         (
             integer("id").primary_key().auto_increment(),
@@ -816,7 +1142,11 @@ fn insert_all_default_fields() {
     assert_eq!(Ok(expected_data), actual_data);
 }
 
-#[test]
+// This test reads query results, which requires reading memory
+// allocated by the native sqlite library. Miri cannot track the
+// provenance of that memory when using `-Zmiri-native-lib`.
+#[cfg(not(miri))]
+#[diesel_test_helper::test]
 #[cfg(feature = "sqlite")]
 fn batch_insert_is_atomic_on_sqlite() {
     use crate::schema::users::dsl::*;
@@ -829,8 +1159,58 @@ fn batch_insert_is_atomic_on_sqlite() {
     assert_eq!(Ok(0), users.count().get_result(connection));
 }
 
+#[diesel_test_helper::test]
+#[cfg(feature = "returning_clauses_for_sqlite_3_35")]
+fn batch_insert_with_returning_is_atomic_on_sqlite() {
+    use crate::schema::users::dsl::*;
+    let connection = &mut connection();
+
+    let new_users = vec![(id.eq(1), name.eq("Sean")), (id.eq(1), name.eq("Tess"))];
+    let result = insert_into(users)
+        .values(&new_users)
+        .get_results::<User>(connection);
+    assert!(result.is_err());
+
+    assert_eq!(Ok(0), users.count().get_result(connection));
+}
+
+#[diesel_test_helper::test]
+#[cfg(feature = "returning_clauses_for_sqlite_3_35")]
+fn batch_insert_with_defaultables_and_returning_is_atomic_on_sqlite() {
+    use crate::schema::users::dsl::*;
+    let connection = &mut connection();
+
+    let new_users = vec![Some(name.eq("Sean")), None];
+    let result = insert_into(users)
+        .values(&new_users)
+        .get_results::<User>(connection);
+    assert!(result.is_err());
+
+    assert_eq!(Ok(0), users.count().get_result(connection));
+}
+
+#[diesel_test_helper::test]
+#[cfg(feature = "returning_clauses_for_sqlite_3_35")]
+fn batch_upsert_with_defaultables_and_returning_is_atomic_on_sqlite() {
+    use crate::schema::users::dsl::*;
+    let connection = &mut connection();
+
+    let new_users = vec![Some(name.eq("Sean")), None];
+    let result = insert_into(users)
+        .values(&new_users)
+        .on_conflict_do_nothing()
+        .get_results::<User>(connection);
+    assert!(result.is_err());
+
+    assert_eq!(Ok(0), users.count().get_result(connection));
+}
+
 // regression test for https://github.com/diesel-rs/diesel/issues/2898
-#[test]
+// This test reads query results, which requires reading memory
+// allocated by the native sqlite library. Miri cannot track the
+// provenance of that memory when using `-Zmiri-native-lib`.
+#[cfg(not(miri))]
+#[diesel_test_helper::test]
 fn mixed_defaultable_insert() {
     use crate::schema::users;
 
@@ -867,7 +1247,11 @@ fn mixed_defaultable_insert() {
 }
 
 // regression test for https://github.com/diesel-rs/diesel/issues/3872
-#[test]
+// This test reads query results, which requires reading memory
+// allocated by the native sqlite library. Miri cannot track the
+// provenance of that memory when using `-Zmiri-native-lib`.
+#[cfg(not(miri))]
+#[diesel_test_helper::test]
 fn upsert_with_composite_primary_key_do_nothing() {
     table! {
         users (id, name) {
@@ -886,6 +1270,7 @@ fn upsert_with_composite_primary_key_do_nothing() {
         .unwrap();
     let users = users::table
         .select(users::name)
+        .order(users::id)
         .load::<String>(conn)
         .unwrap();
 
@@ -894,7 +1279,11 @@ fn upsert_with_composite_primary_key_do_nothing() {
 }
 
 // regression test for https://github.com/diesel-rs/diesel/issues/3872
-#[test]
+// This test reads query results, which requires reading memory
+// allocated by the native sqlite library. Miri cannot track the
+// provenance of that memory when using `-Zmiri-native-lib`.
+#[cfg(not(miri))]
+#[diesel_test_helper::test]
 fn upsert_with_composite_primary_key_do_update() {
     table! {
         users (id, name) {
@@ -906,7 +1295,7 @@ fn upsert_with_composite_primary_key_do_update() {
 
     let conn = &mut connection_with_sean_and_tess_in_users_table();
 
-    #[cfg(feature = "mysql")]
+    #[cfg(any(feature = "mysql", feature = "mariadb"))]
     diesel::insert_into(users::table)
         .values((users::id.eq(1), users::name.eq("John")))
         .on_conflict(diesel::dsl::DuplicatedKeys)
@@ -915,7 +1304,7 @@ fn upsert_with_composite_primary_key_do_update() {
         .execute(conn)
         .unwrap();
 
-    #[cfg(not(feature = "mysql"))]
+    #[cfg(not(any(feature = "mysql", feature = "mariadb")))]
     diesel::insert_into(users::table)
         .values((users::id.eq(1), users::name.eq("John")))
         .on_conflict(users::id)
@@ -931,4 +1320,395 @@ fn upsert_with_composite_primary_key_do_update() {
 
     assert_eq!(users[0], "Jane");
     assert_eq!(users[1], "Tess");
+}
+
+// This test reads query results, which requires reading memory
+// allocated by the native sqlite library. Miri cannot track the
+// provenance of that memory when using `-Zmiri-native-lib`.
+#[cfg(not(miri))]
+#[diesel_test_helper::test]
+fn batch_upsert_non_default_values() {
+    use crate::schema::users;
+    let conn = &mut connection_with_sean_and_tess_in_users_table();
+
+    #[cfg(not(any(feature = "mariadb", feature = "mysql")))]
+    let conflict_clause = users::id;
+
+    #[cfg(any(feature = "mariadb", feature = "mysql"))]
+    let conflict_clause = diesel::dsl::DuplicatedKeys;
+
+    diesel::insert_into(users::table)
+        .values([
+            (
+                users::id.eq(1),
+                users::name.eq("Sean"),
+                users::hair_color.eq("black"),
+            ),
+            (
+                users::id.eq(2),
+                users::name.eq("Tess"),
+                users::hair_color.eq("blue"),
+            ),
+        ])
+        .on_conflict(conflict_clause)
+        .do_update()
+        .set(users::hair_color.eq(diesel::upsert::excluded(users::hair_color)))
+        .execute(conn)
+        .unwrap();
+
+    let users = users::table
+        .select((users::id, users::hair_color))
+        .order_by(users::id)
+        .load::<(i32, Option<String>)>(conn)
+        .unwrap();
+    let expected = vec![
+        (1, Some(String::from("black"))),
+        (2, Some(String::from("blue"))),
+    ];
+    assert_eq!(users, expected);
+}
+
+#[diesel_test_helper::test]
+#[cfg(any(
+    feature = "postgres",
+    feature = "returning_clauses_for_sqlite_3_35",
+    feature = "mariadb"
+))]
+fn batch_upsert_with_returning() {
+    use crate::schema::users;
+    let conn = &mut connection_with_sean_and_tess_in_users_table();
+
+    #[cfg(not(feature = "mariadb"))]
+    let conflict_clause = users::id;
+
+    #[cfg(feature = "mariadb")]
+    let conflict_clause = diesel::dsl::DuplicatedKeys;
+
+    let inserted_users = diesel::insert_into(users::table)
+        .values([
+            (
+                users::id.eq(1),
+                users::name.eq("Sean"),
+                users::hair_color.eq("black"),
+            ),
+            (
+                users::id.eq(2),
+                users::name.eq("Tess"),
+                users::hair_color.eq("blue"),
+            ),
+        ])
+        .on_conflict(conflict_clause)
+        .do_update()
+        .set(users::hair_color.eq(diesel::upsert::excluded(users::hair_color)))
+        .get_results::<User>(conn)
+        .unwrap();
+
+    let expected_users = vec![
+        User {
+            id: 1,
+            name: "Sean".to_string(),
+            hair_color: Some("black".to_string()),
+        },
+        User {
+            id: 2,
+            name: "Tess".to_string(),
+            hair_color: Some("blue".to_string()),
+        },
+    ];
+
+    assert_eq!(inserted_users, expected_users);
+}
+
+#[diesel_test_helper::test]
+#[cfg(feature = "postgres")]
+fn returning_old_column_in_insert_on_conflict_do_update() {
+    use crate::schema::users::dsl::*;
+    use diesel::pg::returning::old;
+
+    let connection = &mut connection_with_sean_and_tess_in_users_table();
+
+    if !pg_server_supports_returning_old(connection) {
+        return;
+    }
+
+    use diesel::ExpressionMethods;
+
+    let sean = find_user_by_name("Sean", connection);
+
+    // Conflict path: row already exists, so `old.name` is `Some(...)`.
+    // `old(col)` must be wrapped in `.nullable()` in `ON CONFLICT ... DO UPDATE`
+    // because rows that were freshly inserted (rather than updated) come back
+    // with `old.col = NULL`. Forgetting `.nullable()` is a compile-time error.
+    let (was, now): (Option<String>, String) = insert_into(users)
+        .values((id.eq(sean.id), name.eq("temp")))
+        .on_conflict(id)
+        .do_update()
+        .set(name.eq("Renamed"))
+        .returning((old(name).nullable(), name))
+        .get_result(connection)
+        .unwrap();
+    assert_eq!(Some("Sean".to_string()), was);
+    assert_eq!("Renamed", now);
+
+    // Non-conflict path: row is being inserted, so `old.name` is `None`.
+    let (was, now): (Option<String>, String) = insert_into(users)
+        .values(name.eq("Brand New"))
+        .on_conflict(id)
+        .do_update()
+        .set(name.eq("Should not happen"))
+        .returning((old(name).nullable(), name))
+        .get_result(connection)
+        .unwrap();
+    assert_eq!(None, was);
+    assert_eq!("Brand New", now);
+}
+
+#[diesel_test_helper::test]
+#[cfg(feature = "postgres")]
+fn returning_old_column_in_insert_on_conflict_do_update_via_selectable() {
+    use crate::schema::users;
+
+    let connection = &mut connection_with_sean_and_tess_in_users_table();
+
+    if !pg_server_supports_returning_old(connection) {
+        return;
+    }
+
+    // In `INSERT ... ON CONFLICT ... DO UPDATE`, freshly inserted rows have no
+    // pre-existing values, so `old(col)` must be wrapped in `.nullable()` —
+    // and the `Selectable` field must therefore be an `Option<...>`.
+    #[derive(Queryable, Selectable, PartialEq, Debug)]
+    #[diesel(table_name = users)]
+    struct UpsertOldNew {
+        #[diesel(select_expression = diesel::pg::returning::old(users::name).nullable())]
+        was: Option<String>,
+        name: String,
+    }
+
+    let sean = find_user_by_name("Sean", connection);
+
+    // Conflict path: row already exists, so `old.name` is `Some(...)`.
+    let row: UpsertOldNew = insert_into(users::table)
+        .values((users::id.eq(sean.id), users::name.eq("temp")))
+        .on_conflict(users::id)
+        .do_update()
+        .set(users::name.eq("Renamed"))
+        .returning(UpsertOldNew::as_select())
+        .get_result(connection)
+        .unwrap();
+    assert_eq!(
+        UpsertOldNew {
+            was: Some("Sean".to_string()),
+            name: "Renamed".to_string(),
+        },
+        row,
+    );
+
+    // Non-conflict path: row is being inserted, so `old.name` is `None`.
+    let row: UpsertOldNew = insert_into(users::table)
+        .values(users::name.eq("Brand New"))
+        .on_conflict(users::id)
+        .do_update()
+        .set(users::name.eq("Should not happen"))
+        .returning(UpsertOldNew::as_select())
+        .get_result(connection)
+        .unwrap();
+    assert_eq!(
+        UpsertOldNew {
+            was: None,
+            name: "Brand New".to_string(),
+        },
+        row,
+    );
+}
+
+#[cfg(any(feature = "mysql", feature = "mariadb"))]
+const GENERATED_KEY: &str = "users.id is AUTO_INCREMENT";
+
+#[cfg(any(feature = "mysql", feature = "mariadb"))]
+#[diesel_test_helper::test]
+fn execute_returning_id_returns_generated_key() {
+    use crate::schema::users::dsl::{id, name, users};
+
+    let connection = &mut connection();
+
+    let generated = insert_into(users)
+        .values(name.eq("Sean"))
+        .execute_returning_id(connection)
+        .unwrap()
+        .expect(GENERATED_KEY);
+
+    let inserted = users.select(id).load::<i32>(connection).unwrap();
+    assert_eq!(inserted.len(), 1);
+    assert_eq!(generated.get(), u64::try_from(inserted[0]).unwrap());
+}
+
+#[cfg(any(feature = "mysql", feature = "mariadb"))]
+#[diesel_test_helper::test]
+fn execute_returning_id_reports_each_statement_separately() {
+    use crate::schema::users::dsl::{id, name, users};
+
+    let connection = &mut connection();
+
+    let first = insert_into(users)
+        .values(name.eq("Sean"))
+        .execute_returning_id(connection)
+        .unwrap()
+        .expect(GENERATED_KEY);
+    let second = insert_into(users)
+        .values(name.eq("Tess"))
+        .execute_returning_id(connection)
+        .unwrap()
+        .expect(GENERATED_KEY);
+
+    assert!(second > first);
+    let inserted = users.select(id).order(id).load::<i32>(connection).unwrap();
+    assert_eq!(inserted.len(), 2);
+    let expected = vec![
+        u64::try_from(inserted[0]).unwrap(),
+        u64::try_from(inserted[1]).unwrap(),
+    ];
+    assert_eq!(vec![first.get(), second.get()], expected);
+}
+
+#[cfg(any(feature = "mysql", feature = "mariadb"))]
+#[diesel_test_helper::test]
+fn execute_returning_id_reports_an_explicit_key() {
+    use crate::schema::users::dsl::{id, name, users};
+
+    let connection = &mut connection();
+
+    // The SQL `LAST_INSERT_ID()` function would not report this one.
+    let generated = insert_into(users)
+        .values((id.eq(42), name.eq("Sean")))
+        .execute_returning_id(connection)
+        .unwrap();
+
+    assert_eq!(generated, NonZeroU64::new(42));
+}
+
+#[cfg(any(feature = "mysql", feature = "mariadb"))]
+#[diesel_test_helper::test]
+fn execute_returning_id_on_duplicate_key_update_reports_the_existing_row() {
+    use crate::schema::users::dsl::{id, name, users};
+
+    let connection = &mut connection();
+    insert_into(users)
+        .values((id.eq(42), name.eq("Sean")))
+        .execute(connection)
+        .unwrap();
+
+    let generated = insert_into(users)
+        .values((id.eq(42), name.eq("Sean")))
+        .on_conflict(diesel::dsl::DuplicatedKeys)
+        .do_update()
+        .set(name.eq("Renamed"))
+        .execute_returning_id(connection)
+        .unwrap();
+
+    assert_eq!(generated, NonZeroU64::new(42));
+    // Proves the update branch ran.
+    let stored = users.select(name).first::<String>(connection).unwrap();
+    assert_eq!(stored, "Renamed");
+}
+
+#[cfg(any(feature = "mysql", feature = "mariadb"))]
+#[diesel_test_helper::test]
+fn execute_returning_id_is_none_when_the_row_is_skipped() {
+    use crate::schema::users::dsl::{id, name, users};
+
+    let connection = &mut connection();
+
+    insert_into(users)
+        .values((id.eq(7), name.eq("Sean")))
+        .execute(connection)
+        .unwrap();
+
+    // `users.id` is AUTO_INCREMENT, so `None` is about the skipped row.
+    let skipped = diesel::insert_or_ignore_into(users)
+        .values((id.eq(7), name.eq("Tess")))
+        .execute_returning_id(connection)
+        .unwrap();
+    assert_eq!(skipped, None);
+
+    let stored = users.select(name).first::<String>(connection).unwrap();
+    assert_eq!(stored, "Sean");
+}
+
+#[cfg(any(feature = "mysql", feature = "mariadb"))]
+#[diesel_test_helper::test]
+fn execute_returning_id_with_default_values() {
+    table! {
+        defaulted_items (item_id) {
+            #[sql_name = "id"]
+            #[auto_increment]
+            item_id -> Integer,
+            count -> Integer,
+        }
+    }
+
+    let connection = &mut connection_without_transaction();
+    // Raw SQL because diesel has no DSL for DDL.
+    sql_query(
+        "CREATE TEMPORARY TABLE defaulted_items (\
+             id INTEGER PRIMARY KEY AUTO_INCREMENT,\
+             count INTEGER NOT NULL DEFAULT 7\
+         )",
+    )
+    .execute(connection)
+    .unwrap();
+    connection.begin_test_transaction().unwrap();
+
+    let generated = insert_into(defaulted_items::table)
+        .default_values()
+        .execute_returning_id(connection)
+        .unwrap()
+        .expect("defaulted_items.id is AUTO_INCREMENT");
+
+    let stored = defaulted_items::table
+        .select((defaulted_items::item_id, defaulted_items::count))
+        .load::<(i32, i32)>(connection)
+        .unwrap();
+    assert_eq!(stored.len(), 1);
+    assert_eq!(generated.get(), u64::try_from(stored[0].0).unwrap());
+    assert_eq!(stored[0].1, 7);
+}
+
+#[diesel_test_helper::test]
+#[cfg(not(miri))] // loads strings via ffi
+fn array_batch_insert_does_reuse_the_right_statement() {
+    let conn = &mut connection();
+
+    #[declare_sql_function]
+    extern "SQL" {
+        fn upper(t: Text) -> Text;
+    }
+
+    diesel::insert_into(users::table)
+        .values([
+            users::name
+                .eq(Box::new("a".into_sql::<Text>())
+                    as Box<dyn BoxableExpression<_, _, SqlType = _>>),
+            users::name
+                .eq(Box::new("b".into_sql::<Text>())
+                    as Box<dyn BoxableExpression<_, _, SqlType = _>>),
+        ])
+        .execute(conn)
+        .unwrap();
+
+    diesel::insert_into(users::table)
+        .values([
+            users::name.eq(Box::new(upper("c")) as Box<dyn BoxableExpression<_, _, SqlType = _>>),
+            users::name.eq(Box::new(upper("d")) as Box<dyn BoxableExpression<_, _, SqlType = _>>),
+        ])
+        .execute(conn)
+        .unwrap();
+
+    let names: Vec<String> = users::table
+        .order(users::id)
+        .select(users::name)
+        .load(conn)
+        .unwrap();
+
+    assert_eq!(names, ["a", "b", "C", "D"]);
 }

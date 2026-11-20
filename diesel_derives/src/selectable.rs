@@ -1,17 +1,29 @@
-use proc_macro2::TokenStream;
-use quote::quote;
+use proc_macro2::{Span, TokenStream};
+use quote::{quote, quote_spanned};
+use std::borrow::Cow;
 use syn::spanned::Spanned;
-use syn::DeriveInput;
-use syn::{parse_quote, Result};
+use syn::{DeriveInput, Ident, Result, parse_quote};
 
 use crate::field::Field;
 use crate::model::Model;
 use crate::util::wrap_in_dummy_mod;
+use diesel_attribute_parser::CheckForBackend;
 
-pub fn derive(item: DeriveInput) -> Result<TokenStream> {
+type DefaultCheckCallback = fn(
+    &Model,
+    &syn::ImplGenerics<'_>,
+    Option<&syn::WhereClause>,
+    &[FieldSelectExpressionTyBuilder<'_>],
+) -> std::prelude::v1::Result<TokenStream, syn::Error>;
+
+pub fn derive(
+    item: DeriveInput,
+    default_check: Option<DefaultCheckCallback>,
+) -> Result<TokenStream> {
     let model = Model::from_item(&item, false, false)?;
 
-    let (_, ty_generics, original_where_clause) = item.generics.split_for_impl();
+    let (original_impl_generics, ty_generics, original_where_clause) =
+        item.generics.split_for_impl();
 
     let mut generics = item.generics.clone();
     generics
@@ -21,8 +33,7 @@ pub fn derive(item: DeriveInput) -> Result<TokenStream> {
     for embed_field in model.fields().iter().filter(|f| f.embed()) {
         let embed_ty = &embed_field.ty;
         generics
-            .where_clause
-            .get_or_insert_with(|| parse_quote!(where))
+            .make_where_clause()
             .predicates
             .push(parse_quote!(#embed_ty: Selectable<__DB>));
     }
@@ -32,45 +43,41 @@ pub fn derive(item: DeriveInput) -> Result<TokenStream> {
     let struct_name = &item.ident;
 
     let mut compile_errors: Vec<syn::Error> = Vec::new();
-    let field_columns_ty = model
+    let field_select_expression_type_builders = model
         .fields()
         .iter()
-        .map(|f| field_column_ty(f, &model, &mut compile_errors))
+        .map(|f| field_select_expression_ty_builder(f, &model, &mut compile_errors))
         .collect::<Result<Vec<_>>>()?;
-    let field_columns_inst = model
+    let field_select_expression_types = field_select_expression_type_builders
+        .iter()
+        .map(|f| f.type_with_backend(&parse_quote!(__DB)))
+        .collect::<Vec<_>>();
+    let field_select_expressions = model
         .fields()
         .iter()
         .map(|f| field_column_inst(f, &model))
         .collect::<Result<Vec<_>>>()?;
 
-    let check_function = if let Some(ref backends) = model.check_for_backend {
-        let field_check_bound = model
-            .fields()
-            .iter()
-            .zip(&field_columns_ty)
-            .filter(|(f, _)| !f.embed())
-            .flat_map(|(f, ty)| {
-                backends.iter().map(move |b| {
-                    let span = f.ty.span();
-                    let field_ty = to_field_ty_bound(f.ty_for_deserialize())?;
-                    Ok(syn::parse_quote_spanned! {span =>
-                        #field_ty: diesel::deserialize::FromSqlRow<diesel::dsl::SqlTypeOf<#ty>, #b>
-                    })
-                })
+    let check_function = match model.check_for_backend.as_ref() {
+        Some(CheckForBackend::Backends(backends)) => Some(generate_check_function(
+            &model,
+            &original_impl_generics,
+            original_where_clause,
+            &field_select_expression_type_builders,
+            backends,
+            parse_quote!(_check_field_compatibility),
+        )?),
+        Some(CheckForBackend::Disabled(_lit)) => None,
+        None => default_check
+            .map(|c| {
+                c(
+                    &model,
+                    &original_impl_generics,
+                    original_where_clause,
+                    &field_select_expression_type_builders,
+                )
             })
-            .collect::<Result<Vec<_>>>()?;
-        let where_clause = &mut original_where_clause.cloned();
-        let where_clause = where_clause.get_or_insert_with(|| parse_quote!(where));
-        for field_check in field_check_bound {
-            where_clause.predicates.push(field_check);
-        }
-        Some(quote::quote! {
-            fn _check_field_compatibility #impl_generics()
-                #where_clause
-            {}
-        })
-    } else {
-        None
+            .transpose()?,
     };
 
     let errors: TokenStream = compile_errors
@@ -85,10 +92,10 @@ pub fn derive(item: DeriveInput) -> Result<TokenStream> {
             for #struct_name #ty_generics
         #where_clause
         {
-            type SelectExpression = (#(#field_columns_ty,)*);
+            type SelectExpression = (#(#field_select_expression_types,)*);
 
             fn construct_selection() -> Self::SelectExpression {
-                (#(#field_columns_inst,)*)
+                (#(#field_select_expressions,)*)
             }
         }
 
@@ -96,6 +103,44 @@ pub fn derive(item: DeriveInput) -> Result<TokenStream> {
 
         #errors
     }))
+}
+
+pub fn generate_check_function(
+    model: &Model,
+    original_impl_generics: &syn::ImplGenerics<'_>,
+    original_where_clause: Option<&syn::WhereClause>,
+    field_select_expression_type_builders: &[FieldSelectExpressionTyBuilder<'_>],
+    backends: &syn::punctuated::Punctuated<syn::TypePath, syn::token::Comma>,
+    function_name: Ident,
+) -> Result<TokenStream> {
+    let field_check_bound = model
+        .fields()
+        .iter()
+        .zip(field_select_expression_type_builders)
+        .flat_map(|(f, ty_builder)| {
+            backends.iter().map(move |b| {
+                let span = Span::mixed_site().located_at(f.ty.span());
+                let field_ty = to_field_ty_bound(f.ty_for_deserialize())?;
+                let ty = ty_builder.type_with_backend(b);
+                Ok(syn::parse_quote_spanned! {span =>
+                    #field_ty: diesel::deserialize::FromSqlRow<
+                        <diesel::dsl::SqlTypeOf<#ty> as diesel::internal::derives::selectable::SqlTypeLikeMarker>::SqlType,
+                        #b,
+                    >
+                })
+            })
+        })
+        .collect::<Result<Vec<_>>>()?;
+    let where_clause = &mut original_where_clause.cloned();
+    let where_clause = where_clause.get_or_insert_with(|| parse_quote!(where));
+    for field_check in field_check_bound {
+        where_clause.predicates.push(field_check);
+    }
+    Ok(quote::quote! {
+        fn #function_name #original_impl_generics()
+            #where_clause
+        {}
+    })
 }
 
 fn to_field_ty_bound(field_ty: &syn::Type) -> Result<TokenStream> {
@@ -108,8 +153,8 @@ fn to_field_ty_bound(field_ty: &syn::Type) -> Result<TokenStream> {
             Err(syn::Error::new(
                 field_ty.span(),
                 format!(
-                    "References are not supported in `Queryable` types\n\
-                         Consider using `std::borrow::Cow<'{}, {}>` instead",
+                    "references are not supported in `Queryable` types\n\
+                         consider using `std::borrow::Cow<'{}, {}>` instead",
                     r.lifetime
                         .as_ref()
                         .expect("It's a struct field so it must have a named lifetime")
@@ -124,11 +169,11 @@ fn to_field_ty_bound(field_ty: &syn::Type) -> Result<TokenStream> {
     }
 }
 
-fn field_column_ty(
-    field: &Field,
+fn field_select_expression_ty_builder<'a>(
+    field: &'a Field,
     model: &Model,
     compile_errors: &mut Vec<syn::Error>,
-) -> Result<TokenStream> {
+) -> Result<FieldSelectExpressionTyBuilder<'a>> {
     if let Some(ref select_expression) = field.select_expression {
         use dsl_auto_type::auto_type::expression_type_inference as type_inference;
         let expr = &select_expression.item;
@@ -142,17 +187,39 @@ fn field_column_ty(
                 .build(),
         );
         compile_errors.extend(errors);
-        Ok(quote::quote!(#inferred_type))
+        Ok(FieldSelectExpressionTyBuilder::Always(
+            quote::quote!(#inferred_type),
+        ))
     } else if let Some(ref select_expression_type) = field.select_expression_type {
         let ty = &select_expression_type.item;
-        Ok(quote!(#ty))
+        Ok(FieldSelectExpressionTyBuilder::Always(quote!(#ty)))
     } else if field.embed() {
-        let embed_ty = &field.ty;
-        Ok(quote!(<#embed_ty as Selectable<__DB>>::SelectExpression))
+        Ok(FieldSelectExpressionTyBuilder::EmbedSelectable {
+            embed_ty: &field.ty,
+        })
     } else {
         let table_name = &model.table_names()[0];
         let column_name = field.column_name()?.to_ident()?;
-        Ok(quote!(#table_name::#column_name))
+        let span = Span::call_site();
+        Ok(FieldSelectExpressionTyBuilder::Always(
+            quote_spanned!(span=> #table_name::#column_name),
+        ))
+    }
+}
+
+pub enum FieldSelectExpressionTyBuilder<'a> {
+    Always(TokenStream),
+    EmbedSelectable { embed_ty: &'a syn::Type },
+}
+
+impl FieldSelectExpressionTyBuilder<'_> {
+    fn type_with_backend(&self, backend: &syn::TypePath) -> Cow<'_, TokenStream> {
+        match self {
+            FieldSelectExpressionTyBuilder::Always(ty) => Cow::Borrowed(ty),
+            FieldSelectExpressionTyBuilder::EmbedSelectable { embed_ty } => {
+                Cow::Owned(quote!(<#embed_ty as Selectable<#backend>>::SelectExpression))
+            }
+        }
     }
 }
 
@@ -166,6 +233,7 @@ fn field_column_inst(field: &Field, model: &Model) -> Result<TokenStream> {
     } else {
         let table_name = &model.table_names()[0];
         let column_name = field.column_name()?.to_ident()?;
-        Ok(quote!(#table_name::#column_name))
+        let span = Span::call_site();
+        Ok(quote_spanned!(span=> #table_name::#column_name))
     }
 }

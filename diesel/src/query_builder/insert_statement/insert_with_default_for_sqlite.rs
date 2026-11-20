@@ -1,22 +1,37 @@
 use super::{BatchInsert, InsertStatement};
-use crate::insertable::InsertValues;
-use crate::insertable::{CanInsertInSingleQuery, ColumnInsertValue, DefaultableColumnInsertValue};
+use crate::insertable::{
+    CanInsertInSingleQuery, ColumnInsertValue, DefaultableColumnInsertValue, InsertValues,
+};
 use crate::prelude::*;
-use crate::query_builder::{AstPass, QueryId, ValuesClause};
-use crate::query_builder::{DebugQuery, QueryFragment};
+use crate::query_builder::debug_query::DebugBinds;
+use crate::query_builder::from_clause::SchemaName;
+use crate::query_builder::returning::{NoReturningClause, ReturningClause};
+use crate::query_builder::upsert::on_conflict_clause::OnConflictValues;
+use crate::query_builder::{
+    AstPass, DebugQuery, QueryBuilder, QueryFragment, QueryId, ValuesClause,
+};
+use crate::query_dsl::LoadQuery;
 use crate::query_dsl::methods::ExecuteDsl;
-use crate::sqlite::Sqlite;
-use std::fmt::{self, Debug, Display};
+use crate::sqlite::{Sqlite, SqliteQueryBuilder};
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
+use core::fmt::{self, Debug, Display};
 
 pub trait DebugQueryHelper<ContainsDefaultableValue> {
     fn fmt_debug(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result;
     fn fmt_display(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result;
 }
 
-impl<T, V, QId, Op, Ret, const STATIC_QUERY_ID: bool> DebugQueryHelper<Yes>
+impl<T, V, QId, Op, Ret, S, const STATIC_QUERY_ID: bool> DebugQueryHelper<Yes>
     for DebugQuery<
         '_,
-        InsertStatement<T, BatchInsert<Vec<ValuesClause<V, T>>, T, QId, STATIC_QUERY_ID>, Op, Ret>,
+        InsertStatement<
+            T,
+            BatchInsert<Vec<ValuesClause<V, T>>, T, QId, STATIC_QUERY_ID>,
+            Op,
+            Ret,
+            S,
+        >,
         Sqlite,
     >
 where
@@ -24,17 +39,20 @@ where
     T: Copy + QuerySource,
     Op: Copy,
     Ret: Copy,
-    for<'b> InsertStatement<T, &'b ValuesClause<V, T>, Op, Ret>: QueryFragment<Sqlite>,
+    S: Clone,
+    for<'b> InsertStatement<T, &'b ValuesClause<V, T>, Op, Ret, S>: QueryFragment<Sqlite>,
 {
     fn fmt_debug(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let mut statements = vec![String::from("BEGIN")];
+        let mut statements = alloc::vec![String::from("BEGIN")];
         for record in self.query.records.values.iter() {
-            let stmt = InsertStatement::new(
-                self.query.target,
-                record,
-                self.query.operator,
-                self.query.returning,
-            );
+            let stmt = InsertStatement {
+                into_clause: self.query.target.from_clause(),
+                operator: self.query.operator,
+                target: self.query.target,
+                records: record,
+                returning: self.query.returning,
+                schema_name: self.query.schema_name.clone(),
+            };
             statements.push(crate::debug_query(&stmt).to_string());
         }
         statements.push("COMMIT".into());
@@ -48,12 +66,14 @@ where
     fn fmt_display(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         writeln!(f, "BEGIN;")?;
         for record in self.query.records.values.iter() {
-            let stmt = InsertStatement::new(
-                self.query.target,
-                record,
-                self.query.operator,
-                self.query.returning,
-            );
+            let stmt = InsertStatement {
+                into_clause: self.query.target.from_clause(),
+                operator: self.query.operator,
+                target: self.query.target,
+                records: record,
+                returning: self.query.returning,
+                schema_name: self.query.schema_name.clone(),
+            };
             writeln!(f, "{}", crate::debug_query(&stmt))?;
         }
         writeln!(f, "COMMIT;")?;
@@ -61,57 +81,123 @@ where
     }
 }
 
-#[allow(unsafe_code)] // cast to transparent wrapper type
-impl<'a, T, V, QId, Op, const STATIC_QUERY_ID: bool> DebugQueryHelper<No>
-    for DebugQuery<'a, InsertStatement<T, BatchInsert<V, T, QId, STATIC_QUERY_ID>, Op>, Sqlite>
-where
-    T: Copy + QuerySource,
-    Op: Copy,
-    DebugQuery<
+impl<'a, T, V, QId, Op, S, const STATIC_QUERY_ID: bool> DebugQueryHelper<No>
+    for DebugQuery<
         'a,
-        InsertStatement<T, SqliteBatchInsertWrapper<V, T, QId, STATIC_QUERY_ID>, Op>,
+        InsertStatement<
+            T,
+            BatchInsert<Vec<ValuesClause<V, T>>, T, QId, STATIC_QUERY_ID>,
+            Op,
+            NoReturningClause,
+            S,
+        >,
         Sqlite,
-    >: Debug + Display,
+    >
+where
+    T: Copy + Table,
+    Op: Copy + QueryFragment<Sqlite>,
+    S: SchemaName,
+    SqliteBatchInsertWrapper<Vec<ValuesClause<V, T>>, T, QId, STATIC_QUERY_ID>:
+        QueryFragment<Sqlite>,
+    V: CanInsertInSingleQuery<Sqlite>,
+    T::FromClause: QueryFragment<Sqlite>,
 {
     fn fmt_debug(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let value = unsafe {
-            // This cast is safe as `SqliteBatchInsertWrapper` is #[repr(transparent)]
-            &*(self as *const DebugQuery<
-                'a,
-                InsertStatement<T, BatchInsert<V, T, QId, STATIC_QUERY_ID>, Op>,
-                Sqlite,
-            >
-                as *const DebugQuery<
-                    'a,
-                    InsertStatement<T, SqliteBatchInsertWrapper<V, T, QId, STATIC_QUERY_ID>, Op>,
-                    Sqlite,
-                >)
-        };
-        <_ as Debug>::fmt(value, f)
+        self.fmt_helper(f, crate::query_builder::debug_query::debug)
     }
 
     fn fmt_display(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let value = unsafe {
-            // This cast is safe as `SqliteBatchInsertWrapper` is #[repr(transparent)]
-            &*(self as *const DebugQuery<
-                'a,
-                InsertStatement<T, BatchInsert<V, T, QId, STATIC_QUERY_ID>, Op>,
-                Sqlite,
-            >
-                as *const DebugQuery<
-                    'a,
-                    InsertStatement<T, SqliteBatchInsertWrapper<V, T, QId, STATIC_QUERY_ID>, Op>,
-                    Sqlite,
-                >)
-        };
-        <_ as Display>::fmt(value, f)
+        self.fmt_helper(f, crate::query_builder::debug_query::display)
     }
 }
 
-impl<T, V, QId, Op, O, const STATIC_QUERY_ID: bool> Display
+#[allow(unsafe_code)] // cast to transparent wrapper type
+impl<'a, T, V, QId, Op, S, const STATIC_QUERY_ID: bool>
+    DebugQuery<
+        'a,
+        InsertStatement<
+            T,
+            BatchInsert<Vec<ValuesClause<V, T>>, T, QId, STATIC_QUERY_ID>,
+            Op,
+            NoReturningClause,
+            S,
+        >,
+        Sqlite,
+    >
+where
+    T: Copy + Table,
+    Op: Copy + QueryFragment<Sqlite>,
+    S: SchemaName,
+    SqliteBatchInsertWrapper<Vec<ValuesClause<V, T>>, T, QId, STATIC_QUERY_ID>:
+        QueryFragment<Sqlite>,
+    V: CanInsertInSingleQuery<Sqlite>,
+    T::FromClause: QueryFragment<Sqlite>,
+{
+    fn fmt_helper(
+        &self,
+        f: &mut fmt::Formatter<'_>,
+        formatter: fn(String, &DebugBinds<'_>, &mut fmt::Formatter<'_>) -> fmt::Result,
+    ) -> fmt::Result {
+        // explicit destruct to make sure we use all  the fields
+        let InsertStatement {
+            operator,
+            target: _,
+            records,
+            returning,
+            into_clause,
+            schema_name,
+        } = self.query;
+        let records = unsafe {
+            // SAFETY:
+            // * SqliteBatchInsertWrapper is `#[repr(transparent)]` so this cast
+            // is allowed
+            &*(records as *const _
+                as *const SqliteBatchInsertWrapper<
+                    Vec<ValuesClause<V, T>>,
+                    T,
+                    QId,
+                    STATIC_QUERY_ID,
+                >)
+        };
+        let mut buffer = Vec::new();
+        let ast_pass = AstPass::debug_binds(&mut buffer, &Sqlite);
+        super::insert_statement::walk_ast_intern::<T, _, _, _, Sqlite>(
+            ast_pass,
+            records,
+            into_clause,
+            schema_name.as_schema_name(),
+            operator,
+            returning,
+        )
+        .map_err(|_| fmt::Error)?;
+        let mut query_builder = SqliteQueryBuilder::default();
+        let mut ast_pass_to_sql_options = Default::default();
+        let sql_pass = AstPass::to_sql(&mut query_builder, &mut ast_pass_to_sql_options, &Sqlite);
+        super::insert_statement::walk_ast_intern::<T, _, _, _, Sqlite>(
+            sql_pass,
+            records,
+            into_clause,
+            schema_name.as_schema_name(),
+            operator,
+            returning,
+        )
+        .map_err(|_| fmt::Error)?;
+        let query = query_builder.finish();
+        let debug_binds = crate::query_builder::debug_query::DebugBinds::new(&buffer);
+        formatter(query, &debug_binds, f)
+    }
+}
+
+impl<T, V, QId, Op, O, S, const STATIC_QUERY_ID: bool> Display
     for DebugQuery<
         '_,
-        InsertStatement<T, BatchInsert<Vec<ValuesClause<V, T>>, T, QId, STATIC_QUERY_ID>, Op>,
+        InsertStatement<
+            T,
+            BatchInsert<Vec<ValuesClause<V, T>>, T, QId, STATIC_QUERY_ID>,
+            Op,
+            NoReturningClause,
+            S,
+        >,
         Sqlite,
     >
 where
@@ -124,10 +210,16 @@ where
     }
 }
 
-impl<T, V, QId, Op, O, const STATIC_QUERY_ID: bool> Debug
+impl<T, V, QId, Op, O, S, const STATIC_QUERY_ID: bool> Debug
     for DebugQuery<
         '_,
-        InsertStatement<T, BatchInsert<Vec<ValuesClause<V, T>>, T, QId, STATIC_QUERY_ID>, Op>,
+        InsertStatement<
+            T,
+            BatchInsert<Vec<ValuesClause<V, T>>, T, QId, STATIC_QUERY_ID>,
+            Op,
+            NoReturningClause,
+            S,
+        >,
         Sqlite,
     >
 where
@@ -211,8 +303,14 @@ where
     type Out = T::Out;
 }
 
-impl<V, T, QId, C, Op, O, const STATIC_QUERY_ID: bool> ExecuteDsl<C, Sqlite>
-    for InsertStatement<T, BatchInsert<Vec<ValuesClause<V, T>>, T, QId, STATIC_QUERY_ID>, Op>
+impl<V, T, QId, C, Op, O, S, const STATIC_QUERY_ID: bool> ExecuteDsl<C, Sqlite>
+    for InsertStatement<
+        T,
+        BatchInsert<Vec<ValuesClause<V, T>>, T, QId, STATIC_QUERY_ID>,
+        Op,
+        NoReturningClause,
+        S,
+    >
 where
     T: QuerySource,
     C: Connection<Backend = Sqlite>,
@@ -225,27 +323,421 @@ where
     }
 }
 
-impl<V, T, QId, C, Op, const STATIC_QUERY_ID: bool> ExecuteDsl<C, Sqlite>
+impl<V, T, QId, C, Op, O, S, Target, ConflictOpt, const STATIC_QUERY_ID: bool> ExecuteDsl<C, Sqlite>
+    for InsertStatement<
+        T,
+        OnConflictValues<
+            BatchInsert<Vec<ValuesClause<V, T>>, T, QId, STATIC_QUERY_ID>,
+            Target,
+            ConflictOpt,
+        >,
+        Op,
+        NoReturningClause,
+        S,
+    >
+where
+    T: QuerySource,
+    C: Connection<Backend = Sqlite>,
+    V: ContainsDefaultableValue<Out = O>,
+    O: Default,
+    (O, Self): ExecuteDsl<C, Sqlite>,
+{
+    fn execute(query: Self, conn: &mut C) -> QueryResult<usize> {
+        <(O, Self) as ExecuteDsl<C, Sqlite>>::execute((O::default(), query), conn)
+    }
+}
+
+impl<V, T, QId, C, Op, S, const STATIC_QUERY_ID: bool> ExecuteDsl<C, Sqlite>
     for (
         Yes,
-        InsertStatement<T, BatchInsert<Vec<ValuesClause<V, T>>, T, QId, STATIC_QUERY_ID>, Op>,
+        InsertStatement<
+            T,
+            BatchInsert<Vec<ValuesClause<V, T>>, T, QId, STATIC_QUERY_ID>,
+            Op,
+            NoReturningClause,
+            S,
+        >,
     )
 where
     C: Connection<Backend = Sqlite>,
     T: Table + Copy + QueryId + 'static,
     T::FromClause: QueryFragment<Sqlite>,
     Op: Copy + QueryId + QueryFragment<Sqlite>,
+    S: Clone + SchemaName,
     V: InsertValues<Sqlite, T> + CanInsertInSingleQuery<Sqlite> + QueryId,
 {
     fn execute((Yes, query): Self, conn: &mut C) -> QueryResult<usize> {
         conn.transaction(|conn| {
             let mut result = 0;
             for record in &query.records.values {
-                let stmt =
-                    InsertStatement::new(query.target, record, query.operator, query.returning);
+                let stmt = InsertStatement {
+                    into_clause: query.target.from_clause(),
+                    operator: query.operator,
+                    target: query.target,
+                    records: record,
+                    returning: query.returning,
+                    schema_name: query.schema_name.clone(),
+                };
                 result += stmt.execute(conn)?;
             }
             Ok(result)
+        })
+    }
+}
+
+impl<'query, V, T, QId, Op, O, U, B, S, const STATIC_QUERY_ID: bool>
+    LoadQuery<'query, SqliteConnection, U, B>
+    for InsertStatement<
+        T,
+        BatchInsert<Vec<ValuesClause<V, T>>, T, QId, STATIC_QUERY_ID>,
+        Op,
+        NoReturningClause,
+        S,
+    >
+where
+    T: QuerySource,
+    V: ContainsDefaultableValue<Out = O>,
+    O: Default,
+    (O, Self): LoadQuery<'query, SqliteConnection, U, B>,
+{
+    type RowIter<'conn> = <(O, Self) as LoadQuery<'query, SqliteConnection, U, B>>::RowIter<'conn>;
+
+    fn internal_load(self, conn: &mut SqliteConnection) -> QueryResult<Self::RowIter<'_>> {
+        <(O, Self) as LoadQuery<'query, SqliteConnection, U, B>>::internal_load(
+            (O::default(), self),
+            conn,
+        )
+    }
+}
+
+impl<'query, V, T, QId, Op, Ret, O, U, B, S, const STATIC_QUERY_ID: bool>
+    LoadQuery<'query, SqliteConnection, U, B>
+    for InsertStatement<
+        T,
+        BatchInsert<Vec<ValuesClause<V, T>>, T, QId, STATIC_QUERY_ID>,
+        Op,
+        ReturningClause<Ret>,
+        S,
+    >
+where
+    T: QuerySource,
+    V: ContainsDefaultableValue<Out = O>,
+    O: Default,
+    (O, Self): LoadQuery<'query, SqliteConnection, U, B>,
+{
+    type RowIter<'conn> = <(O, Self) as LoadQuery<'query, SqliteConnection, U, B>>::RowIter<'conn>;
+
+    fn internal_load(self, conn: &mut SqliteConnection) -> QueryResult<Self::RowIter<'_>> {
+        <(O, Self) as LoadQuery<'query, SqliteConnection, U, B>>::internal_load(
+            (O::default(), self),
+            conn,
+        )
+    }
+}
+
+impl<'query, V, T, QId, Op, O, U, B, S, Target, ConflictOpt, const STATIC_QUERY_ID: bool>
+    LoadQuery<'query, SqliteConnection, U, B>
+    for InsertStatement<
+        T,
+        OnConflictValues<
+            BatchInsert<Vec<ValuesClause<V, T>>, T, QId, STATIC_QUERY_ID>,
+            Target,
+            ConflictOpt,
+        >,
+        Op,
+        NoReturningClause,
+        S,
+    >
+where
+    T: QuerySource,
+    V: ContainsDefaultableValue<Out = O>,
+    O: Default,
+    (O, Self): LoadQuery<'query, SqliteConnection, U, B>,
+{
+    type RowIter<'conn> = <(O, Self) as LoadQuery<'query, SqliteConnection, U, B>>::RowIter<'conn>;
+
+    fn internal_load(self, conn: &mut SqliteConnection) -> QueryResult<Self::RowIter<'_>> {
+        <(O, Self) as LoadQuery<'query, SqliteConnection, U, B>>::internal_load(
+            (O::default(), self),
+            conn,
+        )
+    }
+}
+
+impl<'query, V, T, QId, Op, Ret, O, U, B, S, Target, ConflictOpt, const STATIC_QUERY_ID: bool>
+    LoadQuery<'query, SqliteConnection, U, B>
+    for InsertStatement<
+        T,
+        OnConflictValues<
+            BatchInsert<Vec<ValuesClause<V, T>>, T, QId, STATIC_QUERY_ID>,
+            Target,
+            ConflictOpt,
+        >,
+        Op,
+        ReturningClause<Ret>,
+        S,
+    >
+where
+    T: QuerySource,
+    V: ContainsDefaultableValue<Out = O>,
+    O: Default,
+    (O, Self): LoadQuery<'query, SqliteConnection, U, B>,
+{
+    type RowIter<'conn> = <(O, Self) as LoadQuery<'query, SqliteConnection, U, B>>::RowIter<'conn>;
+
+    fn internal_load(self, conn: &mut SqliteConnection) -> QueryResult<Self::RowIter<'_>> {
+        <(O, Self) as LoadQuery<'query, SqliteConnection, U, B>>::internal_load(
+            (O::default(), self),
+            conn,
+        )
+    }
+}
+
+impl<V, T, QId, Op, O, S, const STATIC_QUERY_ID: bool> RunQueryDsl<SqliteConnection>
+    for (
+        O,
+        InsertStatement<
+            T,
+            BatchInsert<Vec<ValuesClause<V, T>>, T, QId, STATIC_QUERY_ID>,
+            Op,
+            NoReturningClause,
+            S,
+        >,
+    )
+where
+    T: QuerySource,
+    V: ContainsDefaultableValue<Out = O>,
+    O: Default,
+    InsertStatement<
+        T,
+        BatchInsert<Vec<ValuesClause<V, T>>, T, QId, STATIC_QUERY_ID>,
+        Op,
+        NoReturningClause,
+        S,
+    >: RunQueryDsl<SqliteConnection>,
+{
+}
+
+impl<V, T, QId, Op, Ret, O, S, const STATIC_QUERY_ID: bool> RunQueryDsl<SqliteConnection>
+    for (
+        O,
+        InsertStatement<
+            T,
+            BatchInsert<Vec<ValuesClause<V, T>>, T, QId, STATIC_QUERY_ID>,
+            Op,
+            ReturningClause<Ret>,
+            S,
+        >,
+    )
+where
+    T: QuerySource,
+    V: ContainsDefaultableValue<Out = O>,
+    O: Default,
+    InsertStatement<
+        T,
+        BatchInsert<Vec<ValuesClause<V, T>>, T, QId, STATIC_QUERY_ID>,
+        Op,
+        ReturningClause<Ret>,
+        S,
+    >: RunQueryDsl<SqliteConnection>,
+{
+}
+
+impl<V, T, QId, Op, O, S, Target, ConflictOpt, const STATIC_QUERY_ID: bool>
+    RunQueryDsl<SqliteConnection>
+    for (
+        O,
+        InsertStatement<
+            T,
+            OnConflictValues<
+                BatchInsert<Vec<ValuesClause<V, T>>, T, QId, STATIC_QUERY_ID>,
+                Target,
+                ConflictOpt,
+            >,
+            Op,
+            NoReturningClause,
+            S,
+        >,
+    )
+where
+    T: QuerySource,
+    V: ContainsDefaultableValue<Out = O>,
+    O: Default,
+    InsertStatement<
+        T,
+        OnConflictValues<
+            BatchInsert<Vec<ValuesClause<V, T>>, T, QId, STATIC_QUERY_ID>,
+            Target,
+            ConflictOpt,
+        >,
+        Op,
+        NoReturningClause,
+        S,
+    >: RunQueryDsl<SqliteConnection>,
+{
+}
+
+impl<V, T, QId, Op, Ret, O, S, Target, ConflictOpt, const STATIC_QUERY_ID: bool>
+    RunQueryDsl<SqliteConnection>
+    for (
+        O,
+        InsertStatement<
+            T,
+            OnConflictValues<
+                BatchInsert<Vec<ValuesClause<V, T>>, T, QId, STATIC_QUERY_ID>,
+                Target,
+                ConflictOpt,
+            >,
+            Op,
+            ReturningClause<Ret>,
+            S,
+        >,
+    )
+where
+    T: QuerySource,
+    V: ContainsDefaultableValue<Out = O>,
+    O: Default,
+    InsertStatement<
+        T,
+        OnConflictValues<
+            BatchInsert<Vec<ValuesClause<V, T>>, T, QId, STATIC_QUERY_ID>,
+            Target,
+            ConflictOpt,
+        >,
+        Op,
+        ReturningClause<Ret>,
+        S,
+    >: RunQueryDsl<SqliteConnection>,
+{
+}
+
+#[diagnostic::do_not_recommend]
+impl<'query, V, T, QId, Op, Ret, U, B, S, const STATIC_QUERY_ID: bool>
+    LoadQuery<'query, SqliteConnection, U, B>
+    for (
+        Yes,
+        InsertStatement<
+            T,
+            BatchInsert<Vec<ValuesClause<V, T>>, T, QId, STATIC_QUERY_ID>,
+            Op,
+            Ret,
+            S,
+        >,
+    )
+where
+    T: Table + Copy + QueryId + 'static,
+    Op: Copy + QueryId + QueryFragment<Sqlite>,
+    Ret: Copy,
+    S: Clone + SchemaName,
+    InsertStatement<T, ValuesClause<V, T>, Op, Ret, S>: LoadQuery<'query, SqliteConnection, U, B>,
+    Self: RunQueryDsl<SqliteConnection>,
+{
+    type RowIter<'conn> = alloc::vec::IntoIter<QueryResult<U>>;
+
+    fn internal_load(self, conn: &mut SqliteConnection) -> QueryResult<Self::RowIter<'_>> {
+        let (Yes, query) = self;
+
+        conn.transaction(|conn| {
+            let mut results = Vec::with_capacity(query.records.values.len());
+
+            for record in query.records.values {
+                let stmt = InsertStatement {
+                    into_clause: query.target.from_clause(),
+                    operator: query.operator,
+                    target: query.target,
+                    records: record,
+                    returning: query.returning,
+                    schema_name: query.schema_name.clone(),
+                };
+
+                let result = stmt
+                    .internal_load(conn)?
+                    .next()
+                    .ok_or(crate::result::Error::NotFound)?;
+
+                match &result {
+                    Ok(_) | Err(crate::result::Error::DeserializationError(_)) => {
+                        results.push(result)
+                    }
+                    Err(_) => {
+                        result?;
+                    }
+                };
+            }
+
+            Ok(results.into_iter())
+        })
+    }
+}
+
+#[diagnostic::do_not_recommend]
+impl<'query, V, T, QId, Op, Ret, U, B, S, Target, ConflictOpt, const STATIC_QUERY_ID: bool>
+    LoadQuery<'query, SqliteConnection, U, B>
+    for (
+        Yes,
+        InsertStatement<
+            T,
+            OnConflictValues<
+                BatchInsert<Vec<ValuesClause<V, T>>, T, QId, STATIC_QUERY_ID>,
+                Target,
+                ConflictOpt,
+            >,
+            Op,
+            Ret,
+            S,
+        >,
+    )
+where
+    T: Table + Copy + QueryId + 'static,
+    T::FromClause: Copy,
+    Op: Copy,
+    Ret: Copy,
+    S: Clone,
+    Target: Copy,
+    ConflictOpt: Copy,
+    InsertStatement<T, OnConflictValues<ValuesClause<V, T>, Target, ConflictOpt>, Op, Ret, S>:
+        LoadQuery<'query, SqliteConnection, U, B>,
+    Self: RunQueryDsl<SqliteConnection>,
+{
+    type RowIter<'conn> = alloc::vec::IntoIter<QueryResult<U>>;
+
+    fn internal_load(self, conn: &mut SqliteConnection) -> QueryResult<Self::RowIter<'_>> {
+        let (Yes, query) = self;
+
+        conn.transaction(|conn| {
+            let mut results = Vec::with_capacity(query.records.values.values.len());
+
+            for record in query.records.values.values {
+                let stmt = InsertStatement {
+                    operator: query.operator,
+                    target: query.target,
+                    records: OnConflictValues {
+                        values: record,
+                        target: query.records.target,
+                        action: query.records.action,
+                        where_clause: query.records.where_clause,
+                    },
+                    returning: query.returning,
+                    into_clause: query.into_clause,
+                    schema_name: query.schema_name.clone(),
+                };
+
+                let result = stmt
+                    .internal_load(conn)?
+                    .next()
+                    .ok_or(crate::result::Error::NotFound)?;
+
+                match &result {
+                    Ok(_) | Err(crate::result::Error::DeserializationError(_)) => {
+                        results.push(result)
+                    }
+                    Err(_) => {
+                        result?;
+                    }
+                };
+            }
+
+            Ok(results.into_iter())
         })
     }
 }
@@ -255,6 +747,12 @@ where
 pub struct SqliteBatchInsertWrapper<V, T, QId, const STATIC_QUERY_ID: bool>(
     BatchInsert<V, T, QId, STATIC_QUERY_ID>,
 );
+
+impl<V, T, QId, const STATIC_QUERY_ID: bool> crate::query_builder::returning::InsertStmtKind
+    for SqliteBatchInsertWrapper<V, T, QId, STATIC_QUERY_ID>
+{
+    type StmtKind = crate::query_builder::returning::InsertStmtWithoutOnConflictDoUpdate;
+}
 
 impl<V, Tab, QId, const STATIC_QUERY_ID: bool> QueryFragment<Sqlite>
     for SqliteBatchInsertWrapper<Vec<ValuesClause<V, Tab>>, Tab, QId, STATIC_QUERY_ID>
@@ -318,16 +816,17 @@ where
         <BatchInsert<V, T, QId, STATIC_QUERY_ID> as QueryId>::HAS_STATIC_QUERY_ID;
 }
 
-impl<V, T, QId, C, Op, const STATIC_QUERY_ID: bool> ExecuteDsl<C, Sqlite>
+impl<V, T, QId, C, Op, S, const STATIC_QUERY_ID: bool> ExecuteDsl<C, Sqlite>
     for (
         No,
-        InsertStatement<T, BatchInsert<V, T, QId, STATIC_QUERY_ID>, Op>,
+        InsertStatement<T, BatchInsert<V, T, QId, STATIC_QUERY_ID>, Op, NoReturningClause, S>,
     )
 where
     C: Connection<Backend = Sqlite>,
     T: Table + QueryId + 'static,
     T::FromClause: QueryFragment<Sqlite>,
     Op: QueryFragment<Sqlite> + QueryId,
+    S: SchemaName,
     SqliteBatchInsertWrapper<V, T, QId, STATIC_QUERY_ID>:
         QueryFragment<Sqlite> + QueryId + CanInsertInSingleQuery<Sqlite>,
 {
@@ -341,6 +840,134 @@ where
             schema_name: query.schema_name,
         };
         query.execute(conn)
+    }
+}
+
+impl<V, T, QId, C, Op, S, Target, ConflictOpt, const STATIC_QUERY_ID: bool> ExecuteDsl<C, Sqlite>
+    for (
+        No,
+        InsertStatement<
+            T,
+            OnConflictValues<BatchInsert<V, T, QId, STATIC_QUERY_ID>, Target, ConflictOpt>,
+            Op,
+            NoReturningClause,
+            S,
+        >,
+    )
+where
+    C: Connection<Backend = Sqlite>,
+    T: Table + QueryId + 'static,
+    T::FromClause: QueryFragment<Sqlite>,
+    Op: QueryFragment<Sqlite> + QueryId,
+    S: SchemaName,
+    OnConflictValues<SqliteBatchInsertWrapper<V, T, QId, STATIC_QUERY_ID>, Target, ConflictOpt>:
+        QueryFragment<Sqlite> + CanInsertInSingleQuery<Sqlite> + QueryId,
+{
+    fn execute((No, query): Self, conn: &mut C) -> QueryResult<usize> {
+        let query = InsertStatement {
+            operator: query.operator,
+            target: query.target,
+            records: OnConflictValues {
+                values: SqliteBatchInsertWrapper(query.records.values),
+                target: query.records.target,
+                action: query.records.action,
+                where_clause: query.records.where_clause,
+            },
+            returning: query.returning,
+            into_clause: query.into_clause,
+            schema_name: query.schema_name,
+        };
+        query.execute(conn)
+    }
+}
+
+#[diagnostic::do_not_recommend]
+impl<'query, V, T, QId, Op, Ret, U, B, S, const STATIC_QUERY_ID: bool>
+    LoadQuery<'query, SqliteConnection, U, B>
+    for (
+        No,
+        InsertStatement<T, BatchInsert<V, T, QId, STATIC_QUERY_ID>, Op, Ret, S>,
+    )
+where
+    T: Table + QueryId + 'static,
+    InsertStatement<T, SqliteBatchInsertWrapper<V, T, QId, STATIC_QUERY_ID>, Op, Ret, S>:
+        LoadQuery<'query, SqliteConnection, U, B>,
+    Self: RunQueryDsl<SqliteConnection>,
+{
+    type RowIter<'conn> = <InsertStatement<
+        T,
+        SqliteBatchInsertWrapper<V, T, QId, STATIC_QUERY_ID>,
+        Op,
+        Ret,
+        S,
+    > as LoadQuery<'query, SqliteConnection, U, B>>::RowIter<'conn>;
+
+    fn internal_load(self, conn: &mut SqliteConnection) -> QueryResult<Self::RowIter<'_>> {
+        let (No, query) = self;
+
+        let query = InsertStatement {
+            records: SqliteBatchInsertWrapper(query.records),
+            operator: query.operator,
+            target: query.target,
+            returning: query.returning,
+            into_clause: query.into_clause,
+            schema_name: query.schema_name,
+        };
+
+        query.internal_load(conn)
+    }
+}
+
+#[diagnostic::do_not_recommend]
+impl<'query, V, T, QId, Op, Ret, U, B, S, Target, ConflictOpt, const STATIC_QUERY_ID: bool>
+    LoadQuery<'query, SqliteConnection, U, B>
+    for (
+        No,
+        InsertStatement<
+            T,
+            OnConflictValues<BatchInsert<V, T, QId, STATIC_QUERY_ID>, Target, ConflictOpt>,
+            Op,
+            Ret,
+            S,
+        >,
+    )
+where
+    T: Table + QueryId + 'static,
+    InsertStatement<
+        T,
+        OnConflictValues<SqliteBatchInsertWrapper<V, T, QId, STATIC_QUERY_ID>, Target, ConflictOpt>,
+        Op,
+        Ret,
+        S,
+    >: LoadQuery<'query, SqliteConnection, U, B>,
+    Self: RunQueryDsl<SqliteConnection>,
+{
+    type RowIter<'conn> = <InsertStatement<
+        T,
+        OnConflictValues<SqliteBatchInsertWrapper<V, T, QId, STATIC_QUERY_ID>, Target, ConflictOpt>,
+        Op,
+        Ret,
+        S,
+    > as LoadQuery<'query, SqliteConnection, U, B>>::RowIter<'conn>;
+
+    fn internal_load(self, conn: &mut SqliteConnection) -> QueryResult<Self::RowIter<'_>> {
+        let (No, query) = self;
+
+        let query = InsertStatement {
+            operator: query.operator,
+            target: query.target,
+            records: OnConflictValues {
+                values: SqliteBatchInsertWrapper(query.records.values),
+                target: query.records.target,
+                action: query.records.action,
+                where_clause: query.records.where_clause,
+            },
+            returning: query.returning,
+            into_clause: query.into_clause,
+            schema_name: query.schema_name,
+        };
+
+        query.internal_load(conn)
     }
 }
 
@@ -407,4 +1034,4 @@ macro_rules! impl_contains_defaultable_value {
     }
 }
 
-diesel_derives::__diesel_for_each_tuple!(tuple_impls);
+crate::for_each_tuple!(tuple_impls);

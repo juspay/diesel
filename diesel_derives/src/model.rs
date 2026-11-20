@@ -1,17 +1,20 @@
 use proc_macro2::Span;
 use std::slice::from_ref;
+use syn::Result;
 use syn::punctuated::Punctuated;
 use syn::token::Comma;
-use syn::Result;
 use syn::{
     Data, DataStruct, DeriveInput, Field as SynField, Fields, FieldsNamed, FieldsUnnamed, Ident,
     LitBool, Path, Type,
 };
 
-use crate::attrs::{parse_attributes, StructAttr};
 use crate::field::Field;
-use crate::parsers::{BelongsTo, MysqlType, PostgresType, SqliteType};
 use crate::util::camel_to_snake;
+use diesel_attribute_parser::CheckForBackend;
+use diesel_attribute_parser::parsers::{
+    BelongsTo, MariadbType, MysqlType, PostgresType, SqliteType,
+};
+use diesel_attribute_parser::{StructAttr, parse_attributes};
 
 pub struct Model {
     name: Path,
@@ -24,10 +27,14 @@ pub struct Model {
     pub aggregate: bool,
     pub not_sized: bool,
     pub foreign_derive: bool,
+    pub enum_type: bool,
     pub mysql_type: Option<MysqlType>,
+    pub mariadb_type: Option<MariadbType>,
     pub sqlite_type: Option<SqliteType>,
     pub postgres_type: Option<PostgresType>,
-    pub check_for_backend: Option<syn::punctuated::Punctuated<syn::TypePath, syn::Token![,]>>,
+    pub check_for_backend: Option<CheckForBackend>,
+    pub base_query: Option<syn::Expr>,
+    pub base_query_type: Option<syn::Type>,
     fields: Vec<Field>,
 }
 
@@ -52,26 +59,30 @@ impl Model {
             }) => Some(unnamed),
             _ if !allow_unit_structs => {
                 return Err(syn::Error::new(
-                    proc_macro2::Span::call_site(),
-                    "This derive can only be used on non-unit structs",
+                    proc_macro2::Span::mixed_site(),
+                    "this derive can only be used on non-unit structs",
                 ));
             }
             _ => None,
         };
 
         let mut table_names = vec![];
-        let mut primary_key_names = vec![Ident::new("id", Span::call_site())];
+        let mut primary_key_names = vec![Ident::new("id", Span::mixed_site())];
         let mut treat_none_as_default_value = None;
         let mut treat_none_as_null = None;
         let mut belongs_to = vec![];
         let mut sql_types = vec![];
         let mut aggregate = false;
         let mut not_sized = false;
+        let mut enum_type = false;
         let mut foreign_derive = false;
         let mut mysql_type = None;
+        let mut mariadb_type = None;
         let mut sqlite_type = None;
         let mut postgres_type = None;
         let mut check_for_backend = None;
+        let mut base_query = None;
+        let mut base_query_type = None;
 
         for attr in parse_attributes(attrs)? {
             match attr.item {
@@ -97,12 +108,17 @@ impl Model {
                 StructAttr::Aggregate(_) => aggregate = true,
                 StructAttr::NotSized(_) => not_sized = true,
                 StructAttr::ForeignDerive(_) => foreign_derive = true,
+                StructAttr::EnumType(_) => enum_type = true,
                 StructAttr::MysqlType(_, val) => mysql_type = Some(val),
+                StructAttr::MariadbType(_, val) => mariadb_type = Some(val),
                 StructAttr::SqliteType(_, val) => sqlite_type = Some(val),
                 StructAttr::PostgresType(_, val) => postgres_type = Some(val),
                 StructAttr::CheckForBackend(_, b) => {
                     check_for_backend = Some(b);
                 }
+                StructAttr::BaseQuery(_, e) => base_query = Some(e),
+                StructAttr::BaseQueryType(_, t) => base_query_type = Some(t),
+                StructAttr::RenameAll(_, _) => { /*ignore here as only relevant for enums*/ }
             }
         }
 
@@ -120,10 +136,14 @@ impl Model {
             not_sized,
             foreign_derive,
             mysql_type,
+            mariadb_type,
             sqlite_type,
             postgres_type,
             fields: fields_from_item_data(fields)?,
             check_for_backend,
+            base_query,
+            base_query_type,
+            enum_type,
         })
     }
 
@@ -149,7 +169,7 @@ impl Model {
             .ok_or_else(|| {
                 syn::Error::new(
                     column_name.span(),
-                    format!("No field with column name {column_name}"),
+                    format!("no field with column name `{column_name}`"),
                 )
             })
     }

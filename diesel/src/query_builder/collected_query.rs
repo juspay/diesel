@@ -1,7 +1,8 @@
-use super::{AstPass, MoveableBindCollector, Query, QueryFragment, QueryId};
+use super::{AstPass, BindData, MoveableBindCollector, Query, QueryFragment, QueryId};
 use crate::backend::{Backend, DieselReserveSpecialization};
 use crate::result::QueryResult;
 use crate::sql_types::Untyped;
+use alloc::string::String;
 
 #[derive(Debug)]
 #[must_use = "Queries are only executed when calling `load`, `get_result` or similar."]
@@ -28,6 +29,7 @@ impl<T> CollectedQuery<T> {
 
 impl<DB, T> QueryFragment<DB> for CollectedQuery<T>
 where
+    T: BindData,
     DB: Backend + DieselReserveSpecialization,
     for<'a> <DB as Backend>::BindCollector<'a>: MoveableBindCollector<DB, BindData = T>,
 {

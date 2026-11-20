@@ -1,8 +1,8 @@
 use std::fmt::Display;
 
+use crate::MigrationError;
 use crate::errors::RunMigrationsError;
 use crate::file_based_migrations::{DieselMigrationName, TomlMetadataWrapper};
-use crate::MigrationError;
 use diesel::backend::Backend;
 use diesel::migration::{Migration, MigrationName, MigrationSource, MigrationVersion, Result};
 
@@ -71,7 +71,7 @@ impl EmbeddedName {
 }
 
 impl MigrationName for EmbeddedName {
-    fn version(&self) -> MigrationVersion {
+    fn version(&self) -> MigrationVersion<'_> {
         migrations_internals::version_from_string(self.name)
             .expect(
                 "This name contains a valid version. We checked this at compile time by our macro",

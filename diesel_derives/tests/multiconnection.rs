@@ -10,9 +10,11 @@ pub enum InferConnection {
     Sqlite(SqliteConnection),
     #[cfg(feature = "mysql")]
     Mysql(MysqlConnection),
+    #[cfg(feature = "mariadb")]
+    Mariadb(MariadbConnection),
 }
 
-#[derive(Queryable, Selectable, Insertable, AsChangeset)]
+#[derive(Queryable, Selectable, Insertable, AsChangeset, Identifiable)]
 pub struct User {
     pub id: i32,
     pub name: String,
@@ -76,10 +78,10 @@ fn check_queries_work() {
     let b = Box::new(users::name.eq("John"))
         as Box<
             dyn BoxableExpression<
-                users::table,
-                self::multi_connection_impl::MultiBackend,
-                SqlType = _,
-            >,
+                    users::table,
+                    self::multi_connection_impl::MultiBackend,
+                    SqlType = _,
+                >,
         >;
 
     let _ = users::table
@@ -113,6 +115,15 @@ fn check_queries_work() {
         .execute(&mut conn)
         .unwrap();
 
+    // batch update
+    // currently unsupported :(
+    // diesel::update(users::table)
+    //     .set([User {
+    //         id: 42,
+    //         name: "Jane".into(),
+    //     }])
+    //     .execute(&mut conn);
+
     // delete
     diesel::delete(users::table).execute(&mut conn).unwrap();
 }
@@ -120,6 +131,8 @@ fn check_queries_work() {
 fn establish_connection() -> InferConnection {
     let database_url = if cfg!(feature = "mysql") {
         dotenvy::var("MYSQL_UNIT_TEST_DATABASE_URL").or_else(|_| dotenvy::var("DATABASE_URL"))
+    } else if cfg!(feature = "mariadb") {
+        dotenvy::var("MARIADB_UNIT_TEST_DATABASE_URL").or_else(|_| dotenvy::var("DATABASE_URL"))
     } else if cfg!(feature = "postgres") {
         dotenvy::var("PG_DATABASE_URL").or_else(|_| dotenvy::var("DATABASE_URL"))
     } else {
@@ -134,7 +147,7 @@ fn establish_connection() -> InferConnection {
 fn make_test_table(conn: &mut InferConnection) {
     match conn {
         #[cfg(feature = "postgres")]
-        InferConnection::Pg(ref mut conn) => {
+        InferConnection::Pg(conn) => {
             diesel::sql_query(
                 "CREATE TEMPORARY TABLE type_test( \
                      small_int SMALLINT,\
@@ -149,14 +162,15 @@ fn make_test_table(conn: &mut InferConnection) {
                      time1 TIME,\
                      timestamp2 TIMESTAMP,\
                      date2 DATE,\
-                     time2 TIME
+                     time2 TIME,\
+                     numeric NUMERIC
                  )",
             )
             .execute(conn)
             .unwrap();
         }
         #[cfg(feature = "sqlite")]
-        InferConnection::Sqlite(ref mut conn) => {
+        InferConnection::Sqlite(conn) => {
             diesel::sql_query(
                 "CREATE TEMPORARY TABLE type_test( \
                      small_int SMALLINT,\
@@ -171,14 +185,15 @@ fn make_test_table(conn: &mut InferConnection) {
                      time1 TIME,\
                      timestamp2 TIMESTAMP,\
                      date2 DATE,\
-                     time2 TIME
+                     time2 TIME,\
+                     numeric NUMERIC
                  )",
             )
             .execute(conn)
             .unwrap();
         }
         #[cfg(feature = "mysql")]
-        InferConnection::Mysql(ref mut conn) => {
+        InferConnection::Mysql(conn) => {
             diesel::sql_query(
                 "CREATE TEMPORARY TABLE type_test( \
                      `small_int` SMALLINT,\
@@ -193,7 +208,31 @@ fn make_test_table(conn: &mut InferConnection) {
                      `time1` TIME,\
                      `timestamp2` DATETIME,
                      `date2` DATE,\
-                     `time2` TIME
+                     `time2` TIME,\
+                     `numeric` NUMERIC
+                 )",
+            )
+            .execute(conn)
+            .unwrap();
+        }
+        #[cfg(feature = "mariadb")]
+        InferConnection::Mariadb(conn) => {
+            diesel::sql_query(
+                "CREATE TEMPORARY TABLE type_test( \
+                     `small_int` SMALLINT,\
+                     `integer` INT,\
+                     `big_int` BIGINT,\
+                     `float` FLOAT,\
+                     `double` DOUBLE,\
+                     `string` TEXT,\
+                     `blob` BLOB,\
+                     `timestamp1` DATETIME,
+                     `date1` DATE,\
+                     `time1` TIME,\
+                     `timestamp2` DATETIME,
+                     `date2` DATE,\
+                     `time2` TIME,\
+                     `numeric` NUMERIC
                  )",
             )
             .execute(conn)
@@ -205,7 +244,8 @@ fn make_test_table(conn: &mut InferConnection) {
 #[cfg(all(feature = "chrono", feature = "time"))]
 #[test]
 fn type_checks() {
-    use diesel::internal::derives::multiconnection::{chrono, time};
+    use bigdecimal::FromPrimitive;
+    use diesel::internal::derives::multiconnection::{bigdecimal, chrono, time};
 
     table! {
         type_test(integer) {
@@ -222,6 +262,7 @@ fn type_checks() {
             timestamp2 -> Timestamp,
             time2 -> Time,
             date2 -> Date,
+            numeric -> Numeric,
         }
     }
 
@@ -235,12 +276,13 @@ fn type_checks() {
     let double = 5.0_f64;
     let string = String::from("bar");
     let blob = vec![1_u8, 2, 3, 4];
-    let date1 = chrono::NaiveDate::from_ymd_opt(2023, 08, 17).unwrap();
-    let time1 = chrono::NaiveTime::from_hms_opt(07, 50, 12).unwrap();
+    let date1 = chrono::NaiveDate::from_ymd_opt(2023, 8, 17).unwrap();
+    let time1 = chrono::NaiveTime::from_hms_opt(7, 50, 12).unwrap();
     let timestamp1 = chrono::NaiveDateTime::new(date1, time1);
     let time2 = time::Time::from_hms(12, 22, 23).unwrap();
     let date2 = time::Date::from_calendar_date(2023, time::Month::August, 26).unwrap();
     let timestamp2 = time::PrimitiveDateTime::new(date2, time2);
+    let numeric = bigdecimal::BigDecimal::from_f64(std::f64::consts::PI).unwrap();
 
     diesel::insert_into(type_test::table)
         .values((
@@ -257,6 +299,7 @@ fn type_checks() {
             type_test::timestamp2.eq(timestamp2),
             type_test::time2.eq(time2),
             type_test::date2.eq(date2),
+            type_test::numeric.eq(&numeric),
         ))
         .execute(&mut conn)
         .unwrap();
@@ -276,6 +319,7 @@ fn type_checks() {
             time::PrimitiveDateTime, //10
             time::Time,              //11
             time::Date,              //12
+            bigdecimal::BigDecimal,  //13
         )>(&mut conn)
         .unwrap();
 
@@ -292,12 +336,15 @@ fn type_checks() {
     assert_eq!(timestamp2, result.10);
     assert_eq!(time2, result.11);
     assert_eq!(date2, result.12);
+    assert_eq!(numeric, result.13);
 }
 
-#[cfg(all(feature = "chrono", feature = "time"))]
+#[cfg(all(feature = "chrono", feature = "time", feature = "numeric"))]
+#[allow(clippy::unnecessary_literal_unwrap)]
 #[test]
 fn nullable_type_checks() {
-    use diesel::internal::derives::multiconnection::{chrono, time};
+    use bigdecimal::FromPrimitive;
+    use diesel::internal::derives::multiconnection::{bigdecimal, chrono, time};
 
     table! {
         type_test(integer) {
@@ -314,6 +361,8 @@ fn nullable_type_checks() {
             timestamp2 -> Nullable<Timestamp>,
             time2 -> Nullable<Time>,
             date2 -> Nullable<Date>,
+            numeric -> Nullable<Numeric>,
+
         }
     }
 
@@ -328,12 +377,13 @@ fn nullable_type_checks() {
     let double = Some(5.0_f64);
     let string = Some(String::from("bar"));
     let blob = Some(vec![1_u8, 2, 3, 4]);
-    let date1 = Some(chrono::NaiveDate::from_ymd_opt(2023, 08, 17).unwrap());
-    let time1 = Some(chrono::NaiveTime::from_hms_opt(07, 50, 12).unwrap());
+    let date1 = Some(chrono::NaiveDate::from_ymd_opt(2023, 8, 17).unwrap());
+    let time1 = Some(chrono::NaiveTime::from_hms_opt(7, 50, 12).unwrap());
     let timestamp1 = Some(chrono::NaiveDateTime::new(date1.unwrap(), time1.unwrap()));
     let time2 = Some(time::Time::from_hms(12, 22, 23).unwrap());
     let date2 = Some(time::Date::from_calendar_date(2023, time::Month::August, 26).unwrap());
     let timestamp2 = Some(time::PrimitiveDateTime::new(date2.unwrap(), time2.unwrap()));
+    let numeric = Some(bigdecimal::BigDecimal::from_f64(std::f64::consts::PI).unwrap());
 
     diesel::insert_into(type_test::table)
         .values((
@@ -350,6 +400,7 @@ fn nullable_type_checks() {
             type_test::timestamp2.eq(timestamp2),
             type_test::time2.eq(time2),
             type_test::date2.eq(date2),
+            type_test::numeric.eq(&numeric),
         ))
         .execute(&mut conn)
         .unwrap();
@@ -369,6 +420,7 @@ fn nullable_type_checks() {
             Option<time::PrimitiveDateTime>,
             Option<time::Time>,
             Option<time::Date>,
+            Option<bigdecimal::BigDecimal>,
         )>(&mut conn)
         .unwrap();
 
@@ -385,6 +437,7 @@ fn nullable_type_checks() {
     assert_eq!(timestamp2, result.10);
     assert_eq!(time2, result.11);
     assert_eq!(date2, result.12);
+    assert_eq!(numeric, result.13);
 
     diesel::delete(type_test::table).execute(&mut conn).unwrap();
 
@@ -403,6 +456,7 @@ fn nullable_type_checks() {
             type_test::timestamp2.eq(None::<time::PrimitiveDateTime>),
             type_test::time2.eq(None::<time::Time>),
             type_test::date2.eq(None::<time::Date>),
+            type_test::numeric.eq(None::<bigdecimal::BigDecimal>),
         ))
         .execute(&mut conn)
         .unwrap();
@@ -421,6 +475,7 @@ fn nullable_type_checks() {
             Option<time::PrimitiveDateTime>,
             Option<time::Time>,
             Option<time::Date>,
+            Option<bigdecimal::BigDecimal>,
         )>(&mut conn)
         .unwrap();
     assert!(result.0.is_none());
@@ -436,4 +491,63 @@ fn nullable_type_checks() {
     assert!(result.10.is_none());
     assert!(result.11.is_none());
     assert!(result.12.is_none());
+    assert!(result.13.is_none());
+}
+
+#[test]
+fn contains_binds() {
+    use diesel::connection::InstrumentationEvent;
+
+    let mut conn = establish_connection();
+    conn.set_instrumentation(|event: InstrumentationEvent<'_>| {
+        if let InstrumentationEvent::StartQuery { query, .. } = event {
+            #[cfg(any(feature = "sqlite", feature = "mysql", feature = "mariadb"))]
+            assert_eq!(query.to_string(), "SELECT ? -- binds: [1]");
+            #[cfg(feature = "postgres")]
+            assert_eq!(query.to_string(), "SELECT $1 -- binds: [1]");
+        }
+    });
+
+    let res = diesel::select(1.into_sql::<diesel::sql_types::Integer>())
+        .get_result::<i32>(&mut conn)
+        .unwrap();
+    assert_eq!(res, 1);
+}
+
+#[test]
+fn check_enum_works() {
+    #[derive(Debug, Clone, Copy, diesel::types::Enum, PartialEq)]
+    #[diesel(sql_type = diesel::sql_types::Text)]
+    #[diesel(sql_type = diesel::sql_types::Integer)]
+    enum Color {
+        Blue = 0,
+        Red = 1,
+    }
+
+    let mut conn = establish_connection();
+    let v = Color::Red;
+
+    let r = diesel::select(v.into_sql::<diesel::sql_types::Integer>())
+        .get_result::<i32>(&mut conn)
+        .unwrap();
+
+    assert_eq!(r, 1);
+
+    let r = diesel::select(v.into_sql::<diesel::sql_types::Text>())
+        .get_result::<String>(&mut conn)
+        .unwrap();
+
+    assert_eq!(r, "Red");
+
+    let r = diesel::select(1_i32.into_sql::<diesel::sql_types::Integer>())
+        .get_result::<Color>(&mut conn)
+        .unwrap();
+
+    assert_eq!(r, v);
+
+    let r = diesel::select("Red".into_sql::<diesel::sql_types::Text>())
+        .get_result::<Color>(&mut conn)
+        .unwrap();
+
+    assert_eq!(r, v);
 }

@@ -42,7 +42,7 @@ impl ClippyArgs {
     }
 
     fn run_for_backend(&self, backend: Backend, metadata: &Metadata) -> bool {
-        let exclude = crate::utils::get_exclude_for_backend(&backend.to_string(), metadata);
+        let exclude = crate::utils::get_exclude_for_backend(&backend.to_string(), metadata, false);
         let flags = [
             "-F".into(),
             format!("diesel/{backend}"),
@@ -54,6 +54,10 @@ impl ClippyArgs {
             format!("diesel_tests/{backend}"),
             "-F".into(),
             format!("diesel-dynamic-schema/{backend}"),
+            "-F".into(),
+            format!("diesel_migrations/{backend}"),
+            "-F".into(),
+            format!("diesel-async/{backend}"),
         ];
         let mut command = Command::new("cargo");
 
@@ -66,7 +70,20 @@ impl ClippyArgs {
             ])
             .args(exclude)
             .args(flags)
-            .args(["-F", "diesel/extras", "-F", "diesel/with-deprecated"])
+            .args([
+                "-F",
+                "diesel/extras",
+                "-F",
+                "diesel/with-deprecated",
+                "-F",
+                "diesel_derives/numeric",
+                "-F",
+                "diesel_derives/chrono",
+                "-F",
+                "diesel_derives/time",
+                "-F",
+                "diesel-async/migrations",
+            ])
             .args(&self.flags)
             .current_dir(&metadata.workspace_root);
 

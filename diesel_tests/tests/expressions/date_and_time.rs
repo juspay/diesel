@@ -57,7 +57,7 @@ table! {
     }
 }
 
-#[test]
+#[diesel_test_helper::test]
 #[cfg(feature = "postgres")]
 fn now_executes_sql_function_now() {
     use self::has_timestamps::dsl::*;
@@ -83,7 +83,7 @@ fn now_executes_sql_function_now() {
     assert_eq!(Ok(vec![2]), after_today);
 }
 
-#[test]
+#[diesel_test_helper::test]
 #[cfg(feature = "postgres")]
 // FIXME: Replace this with an actual timestamptz expression
 fn now_can_be_used_as_timestamptz() {
@@ -107,7 +107,7 @@ fn now_can_be_used_as_timestamptz() {
     assert_eq!(Ok(vec![1]), before_now);
 }
 
-#[test]
+#[diesel_test_helper::test]
 #[cfg(feature = "postgres")]
 // FIXME: Replace this with an actual timestamptz expression
 fn now_can_be_used_as_nullable_timestamptz() {
@@ -131,7 +131,142 @@ fn now_can_be_used_as_nullable_timestamptz() {
     assert_eq!(Ok(vec![1]), before_now);
 }
 
-#[test]
+#[diesel_test_helper::test]
+#[cfg(feature = "postgres")]
+fn now_can_be_used_as_timestamptz_in_borrowed_changesets() {
+    use self::has_timestamptzs::{created_at, id, updated_at};
+
+    #[derive(AsChangeset, Identifiable)]
+    #[diesel(table_name = has_timestamptzs)]
+    struct Touch {
+        id: i32,
+        updated_at: now,
+    }
+
+    #[derive(AsChangeset, Identifiable)]
+    #[diesel(table_name = has_timestamptzs)]
+    struct TouchWithBorrowedNow<'a> {
+        id: i32,
+        updated_at: &'a now,
+    }
+
+    let connection = &mut connection();
+    setup_test_table(connection);
+    diesel::sql_query(
+        "INSERT INTO has_timestamptzs (id, created_at, updated_at) \
+             SELECT id, NOW(), NOW() - '1 day'::interval FROM generate_series(1, 7) AS id",
+    )
+    .execute(connection)
+    .unwrap();
+
+    // `&Touch` sets `updated_at` through `&now`
+    let batch = [
+        Touch {
+            id: 1,
+            updated_at: now,
+        },
+        Touch {
+            id: 2,
+            updated_at: now,
+        },
+    ];
+    update(has_timestamptzs::table)
+        .set(&batch)
+        .execute(connection)
+        .unwrap();
+    update(has_timestamptzs::table.find(3))
+        .set(&Touch {
+            id: 3,
+            updated_at: now,
+        })
+        .execute(connection)
+        .unwrap();
+
+    // `&TouchWithBorrowedNow` sets `updated_at` through `&&now`
+    let batch = [
+        TouchWithBorrowedNow {
+            id: 4,
+            updated_at: &now,
+        },
+        TouchWithBorrowedNow {
+            id: 5,
+            updated_at: &now,
+        },
+    ];
+    update(has_timestamptzs::table)
+        .set(&batch)
+        .execute(connection)
+        .unwrap();
+    update(has_timestamptzs::table.find(6))
+        .set(&TouchWithBorrowedNow {
+            id: 6,
+            updated_at: &now,
+        })
+        .execute(connection)
+        .unwrap();
+
+    let touched = has_timestamptzs::table
+        .select(id)
+        .filter(updated_at.ge(created_at))
+        .order(id)
+        .load::<i32>(connection);
+    assert_eq!(Ok(vec![1, 2, 3, 4, 5, 6]), touched);
+}
+
+#[diesel_test_helper::test]
+#[cfg(feature = "postgres")]
+fn now_and_today_can_be_used_as_nullable_in_borrowed_changesets() {
+    use self::nullable_date_and_time::{date, id, timestamp, timestamptz};
+
+    #[derive(AsChangeset)]
+    #[diesel(table_name = nullable_date_and_time)]
+    struct Touch {
+        timestamp: now,
+        timestamptz: now,
+        date: today,
+    }
+
+    #[derive(AsChangeset)]
+    #[diesel(table_name = nullable_date_and_time)]
+    struct TouchWithBorrowedNowAndToday<'a> {
+        timestamp: &'a now,
+        timestamptz: &'a now,
+        date: &'a today,
+    }
+
+    let connection = &mut connection();
+    setup_test_table(connection);
+    diesel::sql_query("INSERT INTO nullable_date_and_time (id) VALUES (1), (2)")
+        .execute(connection)
+        .unwrap();
+
+    // `&Touch` sets the columns through `&now` and `&today`
+    update(nullable_date_and_time::table.find(1))
+        .set(&Touch {
+            timestamp: now,
+            timestamptz: now,
+            date: today,
+        })
+        .execute(connection)
+        .unwrap();
+    // `&TouchWithBorrowedNowAndToday` sets the columns through `&&now` and `&&today`
+    update(nullable_date_and_time::table.find(2))
+        .set(&TouchWithBorrowedNowAndToday {
+            timestamp: &now,
+            timestamptz: &now,
+            date: &today,
+        })
+        .execute(connection)
+        .unwrap();
+
+    let touched = nullable_date_and_time::table
+        .select((timestamp.eq(now), timestamptz.eq(now), date.eq(today)))
+        .order(id)
+        .load(connection);
+    assert_eq!(Ok(vec![(Some(true), Some(true), Some(true)); 2]), touched);
+}
+
+#[diesel_test_helper::test]
 fn now_can_be_used_as_nullable() {
     use diesel::sql_types::Timestamp;
 
@@ -141,7 +276,7 @@ fn now_can_be_used_as_nullable() {
     assert_eq!(Ok(Some(true)), result);
 }
 
-#[test]
+#[diesel_test_helper::test]
 fn today_can_be_used_as_nullable() {
     use diesel::sql_types::Date;
 
@@ -151,7 +286,7 @@ fn today_can_be_used_as_nullable() {
     assert_eq!(Ok(Some(true)), result);
 }
 
-#[test]
+#[diesel_test_helper::test]
 #[cfg(feature = "postgres")]
 fn today_executes_sql_function_current_date() {
     use self::has_date::dsl::*;
@@ -177,7 +312,7 @@ fn today_executes_sql_function_current_date() {
     assert_eq!(Ok(vec![2]), after_today);
 }
 
-#[test]
+#[diesel_test_helper::test]
 #[cfg(feature = "sqlite")]
 fn today_executes_sql_function_current_date() {
     use self::has_date::dsl::*;
@@ -203,8 +338,8 @@ fn today_executes_sql_function_current_date() {
     assert_eq!(Ok(vec![2]), after_today);
 }
 
-#[test]
-#[cfg(feature = "mysql")]
+#[diesel_test_helper::test]
+#[cfg(any(feature = "mysql", feature = "mariadb"))]
 fn today_executes_sql_function_current_date() {
     use self::has_date::dsl::*;
 
@@ -229,8 +364,8 @@ fn today_executes_sql_function_current_date() {
     assert_eq!(Ok(vec![43]), after_today);
 }
 
-#[test]
-#[cfg(feature = "mysql")]
+#[diesel_test_helper::test]
+#[cfg(any(feature = "mysql", feature = "mariadb"))]
 fn now_executes_sql_function_now() {
     use self::has_timestamps::dsl::*;
 
@@ -255,7 +390,7 @@ fn now_executes_sql_function_now() {
     assert_eq!(Ok(vec![43]), after_today);
 }
 
-#[test]
+#[diesel_test_helper::test]
 #[cfg(feature = "sqlite")]
 fn now_executes_sql_function_now() {
     use self::has_timestamps::dsl::*;
@@ -280,8 +415,7 @@ fn now_executes_sql_function_now() {
     assert_eq!(Ok(vec![1]), before_today);
     assert_eq!(Ok(vec![2]), after_today);
 }
-#[test]
-#[cfg(not(feature = "mysql"))] // FIXME: Figure out how to handle tests that modify schema
+#[diesel_test_helper::test]
 fn date_uses_sql_function_date() {
     use self::has_timestamps::dsl::*;
 
@@ -305,7 +439,7 @@ fn date_uses_sql_function_date() {
     assert_eq!(Ok(expected_data), actual_data);
 }
 
-#[test]
+#[diesel_test_helper::test]
 #[cfg(feature = "postgres")]
 fn time_is_deserialized_properly() {
     use self::has_time::dsl::*;
@@ -328,7 +462,7 @@ fn time_is_deserialized_properly() {
     assert_eq!(Ok(expected_data), actual_data);
 }
 
-#[test]
+#[diesel_test_helper::test]
 #[cfg(feature = "postgres")]
 fn interval_is_deserialized_properly() {
     use diesel::dsl::sql;
@@ -353,7 +487,7 @@ fn interval_is_deserialized_properly() {
     assert_eq!(Ok(expected_data), data);
 }
 
-#[test]
+#[diesel_test_helper::test]
 #[cfg(feature = "postgres")]
 fn adding_interval_to_timestamp() {
     use self::has_timestamps::dsl::*;
@@ -378,7 +512,7 @@ fn adding_interval_to_timestamp() {
     assert_eq!(expected_data, actual_data);
 }
 
-#[test]
+#[diesel_test_helper::test]
 #[cfg(feature = "postgres")]
 fn adding_interval_to_timestamptz() {
     use self::has_timestamptzs::dsl::*;
@@ -403,7 +537,7 @@ fn adding_interval_to_timestamptz() {
     assert_eq!(expected_data, actual_data);
 }
 
-#[test]
+#[diesel_test_helper::test]
 #[cfg(feature = "postgres")]
 fn adding_interval_to_nullable_things() {
     use self::nullable_date_and_time::dsl::*;
@@ -452,11 +586,16 @@ fn adding_interval_to_nullable_things() {
     assert_eq!(expected_data, actual_data);
 }
 
-#[cfg(any(feature = "postgres", feature = "sqlite", feature = "mysql"))]
+#[cfg(any(
+    feature = "postgres",
+    feature = "sqlite",
+    feature = "mysql",
+    feature = "mariadb"
+))]
 fn setup_test_table(conn: &mut TestConnection) {
     use crate::schema_dsl::*;
 
-    create_table(
+    create_temporary_table(
         "has_timestamps",
         (
             integer("id").primary_key().auto_increment(),
@@ -470,7 +609,7 @@ fn setup_test_table(conn: &mut TestConnection) {
     .unwrap();
 
     #[cfg(feature = "postgres")]
-    create_table(
+    create_temporary_table(
         "has_timestamptzs",
         (
             integer("id").primary_key().auto_increment(),
@@ -483,7 +622,7 @@ fn setup_test_table(conn: &mut TestConnection) {
     .execute(conn)
     .unwrap();
 
-    create_table(
+    create_temporary_table(
         "has_time",
         (
             integer("id").primary_key().auto_increment(),
@@ -493,7 +632,7 @@ fn setup_test_table(conn: &mut TestConnection) {
     .execute(conn)
     .unwrap();
 
-    create_table(
+    create_temporary_table(
         "has_date",
         (
             integer("id").primary_key().auto_increment(),
@@ -503,7 +642,7 @@ fn setup_test_table(conn: &mut TestConnection) {
     .execute(conn)
     .unwrap();
 
-    create_table(
+    create_temporary_table(
         "nullable_date_and_time",
         (
             integer("id").primary_key().auto_increment(),

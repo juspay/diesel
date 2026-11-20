@@ -1,10 +1,10 @@
-use std::marker::PhantomData;
-
 use crate::expression::*;
 use crate::query_builder::*;
-use crate::query_dsl::RunQueryDsl;
+use crate::query_dsl::RunQueryDslSupport;
 use crate::result::QueryResult;
 use crate::sql_types::DieselNumericOps;
+use alloc::string::String;
+use core::marker::PhantomData;
 
 #[derive(Debug, Clone, DieselNumericOps)]
 #[must_use = "Queries are only executed when calling `load`, `get_result`, or similar."]
@@ -79,6 +79,11 @@ where
     /// #    }
     /// # }
     /// #
+    /// # // Reading the query result requires reading memory allocated by the
+    /// # // native sqlite library, which miri cannot track provenance for.
+    /// # #[cfg(miri)]
+    /// # fn main() {}
+    /// # #[cfg(not(miri))]
     /// # fn main() {
     /// #     use self::users::dsl::*;
     /// #     use diesel::dsl::sql;
@@ -90,9 +95,9 @@ where
     ///     .select(name)
     ///     .filter(
     ///         sql::<Bool>("id > ")
-    ///         .bind::<Integer,_>(1)
-    ///         .sql(" AND name <> ")
-    ///         .bind::<Text, _>("Ryan")
+    ///             .bind::<Integer, _>(1)
+    ///             .sql(" AND name <> ")
+    ///             .bind::<Text, _>("Ryan"),
     ///     )
     ///     .get_results(connection);
     /// let expected = vec!["Tess".to_string()];
@@ -107,17 +112,18 @@ where
         UncheckedBind::new(self, bind_value.as_expression())
     }
 
-    /// Use literal SQL in the query builder
+    /// Append raw SQL to this literal.
     ///
-    /// This function is intended for use when you need a small bit of raw SQL in
-    /// your query. If you want to write the entire query using raw SQL, use
-    /// [`sql_query`](crate::sql_query()) instead.
+    /// The SQL built so far renders first, then the given SQL text. This
+    /// allows interleaving raw SQL fragments with [`bind`] calls when the
+    /// expression DSL cannot express the fragment.
     ///
     /// # Safety
     ///
-    /// This function should be used with care, as Diesel cannot validate that
-    /// the value is of the right type nor can it validate that you have passed
-    /// the correct number of parameters.
+    /// Diesel passes the given string to the database as written. It must
+    /// therefore never contain values that come from outside your own code,
+    /// because anything interpolated into the SQL text can carry an SQL
+    /// injection. Pass such values with [`bind`] instead.
     ///
     /// # Examples
     ///
@@ -131,6 +137,11 @@ where
     /// #    }
     /// # }
     /// #
+    /// # // Reading the query result requires reading memory allocated by the
+    /// # // native sqlite library, which miri cannot track provenance for.
+    /// # #[cfg(miri)]
+    /// # fn main() {}
+    /// # #[cfg(not(miri))]
     /// # fn main() {
     /// #     use self::users::dsl::*;
     /// #     use diesel::dsl::sql;
@@ -140,15 +151,14 @@ where
     /// #           .execute(connection).unwrap();
     /// let query = users
     ///     .select(name)
-    ///     .filter(
-    ///         sql::<Bool>("id > 1")
-    ///         .sql(" AND name <> 'Ryan'")
-    ///     )
+    ///     .filter(sql::<Bool>("id > 1").sql(" AND name <> 'Ryan'"))
     ///     .get_results(connection);
     /// let expected = vec!["Tess".to_string()];
     /// assert_eq!(Ok(expected), query);
     /// # }
     /// ```
+    ///
+    /// [`bind`]: Self::bind()
     pub fn sql(self, sql: &str) -> SqlLiteral<ST, Self> {
         SqlLiteral::new(sql.into(), self)
     }
@@ -187,7 +197,7 @@ where
     type SqlType = ST;
 }
 
-impl<ST, T, Conn> RunQueryDsl<Conn> for SqlLiteral<ST, T> {}
+impl<ST, T> RunQueryDslSupport for SqlLiteral<ST, T> {}
 
 impl<QS, ST, T> SelectableExpression<QS> for SqlLiteral<ST, T> where Self: Expression {}
 
@@ -215,10 +225,20 @@ impl<ST, T, GB> ValidGrouping<GB> for SqlLiteral<ST, T> {
 /// If you give the wrong type, it'll either return an error when deserializing
 /// the query result or produce unexpected values.
 ///
+/// Diesel also passes the given string to the database as written. It must
+/// therefore never contain values that come from outside your own code,
+/// because anything interpolated into the SQL text can carry an SQL
+/// injection. Pass such values with [`SqlLiteral::bind()`] instead.
+///
 /// # Examples
 ///
 /// ```rust
 /// # include!("../doctest_setup.rs");
+/// # // Reading the query result requires reading memory allocated by the
+/// # // native sqlite library, which miri cannot track provenance for.
+/// # #[cfg(miri)]
+/// # fn main() {}
+/// # #[cfg(not(miri))]
 /// # fn main() {
 /// #     run_test_1().unwrap();
 /// #     run_test_2().unwrap();
@@ -229,7 +249,9 @@ impl<ST, T, GB> ValidGrouping<GB> for SqlLiteral<ST, T> {
 /// #     use diesel::sql_types::Bool;
 /// use diesel::dsl::sql;
 /// #     let connection = &mut establish_connection();
-/// let user = users.filter(sql::<Bool>("name = 'Sean'")).first(connection)?;
+/// let user = users
+///     .filter(sql::<Bool>("name = 'Sean'"))
+///     .first(connection)?;
 /// let expected = (1, String::from("Sean"));
 /// assert_eq!(expected, user);
 /// #     Ok(())
@@ -247,9 +269,9 @@ impl<ST, T, GB> ValidGrouping<GB> for SqlLiteral<ST, T> {
 ///     .select(name)
 ///     .filter(
 ///         sql::<Bool>("id > ")
-///         .bind::<Integer,_>(1)
-///         .sql(" AND name <> ")
-///         .bind::<Text, _>("Ryan")
+///             .bind::<Integer, _>(1)
+///             .sql(" AND name <> ")
+///             .bind::<Text, _>("Ryan"),
 ///     )
 ///     .get_results(connection);
 /// let expected = vec!["Tess".to_string()];
@@ -268,7 +290,6 @@ where
 #[derive(QueryId, Debug, Clone, Copy)]
 #[must_use = "Queries are only executed when calling `load`, `get_result`, or similar."]
 /// Returned by the [`SqlLiteral::bind()`] method when binding a value to a fragment of SQL.
-///
 pub struct UncheckedBind<Query, Value> {
     query: Query,
     value: Value,
@@ -282,17 +303,19 @@ where
         UncheckedBind { query, value }
     }
 
-    /// Use literal SQL in the query builder.
+    /// Append raw SQL after this literal and the values bound to it.
     ///
-    /// This function is intended for use when you need a small bit of raw SQL in
-    /// your query. If you want to write the entire query using raw SQL, use
-    /// [`sql_query`](crate::sql_query()) instead.
+    /// The literal and its bound values render first, then the given SQL
+    /// text. This allows interleaving raw SQL fragments with
+    /// [`SqlLiteral::bind()`] calls when the expression DSL cannot express
+    /// the fragment.
     ///
     /// # Safety
     ///
-    /// This function should be used with care, as Diesel cannot validate that
-    /// the value is of the right type nor can it validate that you have passed
-    /// the correct number of parameters.
+    /// Diesel passes the given string to the database as written. It must
+    /// therefore never contain values that come from outside your own code,
+    /// because anything interpolated into the SQL text can carry an SQL
+    /// injection. Pass such values with [`SqlLiteral::bind()`] instead.
     ///
     /// # Examples
     ///
@@ -306,6 +329,11 @@ where
     /// #    }
     /// # }
     /// #
+    /// # // Reading the query result requires reading memory allocated by the
+    /// # // native sqlite library, which miri cannot track provenance for.
+    /// # #[cfg(miri)]
+    /// # fn main() {}
+    /// # #[cfg(not(miri))]
     /// # fn main() {
     /// #     use self::users::dsl::*;
     /// #     use diesel::dsl::sql;
@@ -317,8 +345,8 @@ where
     ///     .select(name)
     ///     .filter(
     ///         sql::<Bool>("id > ")
-    ///         .bind::<Integer,_>(1)
-    ///         .sql(" AND name <> 'Ryan'")
+    ///             .bind::<Integer, _>(1)
+    ///             .sql(" AND name <> 'Ryan'"),
     ///     )
     ///     .get_results(connection);
     /// let expected = vec!["Tess".to_string()];
@@ -368,7 +396,7 @@ impl<QS, Query, Value> SelectableExpression<QS> for UncheckedBind<Query, Value> 
 
 impl<QS, Query, Value> AppearsOnTable<QS> for UncheckedBind<Query, Value> where Self: Expression {}
 
-impl<Query, Value, Conn> RunQueryDsl<Conn> for UncheckedBind<Query, Value> {}
+impl<Query, Value> RunQueryDslSupport for UncheckedBind<Query, Value> {}
 
 mod private {
     use crate::backend::{Backend, DieselReserveSpecialization};

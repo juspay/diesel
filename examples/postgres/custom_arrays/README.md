@@ -455,12 +455,9 @@ impl FromSql<PgProtocolType, Pg> for ProtocolType {
             b"GRPC" => Ok(ProtocolType::GRPC),
             b"HTTP" => Ok(ProtocolType::HTTP),
             b"UDP" => Ok(ProtocolType::UDP),
-            _ => Err(DatabaseError(
-                DatabaseErrorKind::SerializationFailure,
-                Box::new(format!(
-                    "Unrecognized enum variant: {:?}",
-                    String::from_utf8_lossy(bytes.as_bytes())
-                )),
+            _ => Err(format!(
+                "Unrecognized enum variant: {:?}",
+                String::from_utf8_lossy(bytes.as_bytes())
             )
             .into()),
         }
@@ -524,7 +521,7 @@ impl ToSql<crate::schema::smdb::sql_types::ServiceEndpoint, Pg> for Endpoint {
 
 I cannot stress enough that it is paramount that the tuple type signature must match exactly the Postgres type signature
 defined in your up.sql.
-Ideally, you want to use the split view function in your IDE to have the up.sql in one pane and the the ToSql
+Ideally, you want to use the split view function in your IDE to have the up.sql in one pane and the ToSql
 implementation in another pane, both side by side, to double check
 that the number and types match.
 If the type or number of types mismatch, you will get a compiler error telling you that somehow either
@@ -992,7 +989,7 @@ fn postgres_connection() -> PgConnection {
     .expect("PG_DATABASE_URL must be set");
     
     PgConnection::establish(&database_url)
-        .unwrap_or_else(|_| panic!("Error connecting to {}", database_url))
+        .unwrap_or_else(|e| panic!("Failed to connect, error: {}", e))
 }
 ```
 

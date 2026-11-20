@@ -1,4 +1,4 @@
-use super::from_clause::AsQuerySource;
+use super::from_clause::{AsQuerySource, SchemaName};
 use crate::expression::{Expression, SelectableExpression};
 use crate::query_builder::*;
 use crate::query_source::QuerySource;
@@ -8,12 +8,12 @@ pub struct DefaultSelectClause<QS: AsQuerySource> {
     default_selection: <QS::QuerySource as QuerySource>::DefaultSelection,
 }
 
-impl<QS> std::fmt::Debug for DefaultSelectClause<QS>
+impl<QS> core::fmt::Debug for DefaultSelectClause<QS>
 where
     QS: AsQuerySource,
-    <QS::QuerySource as QuerySource>::DefaultSelection: std::fmt::Debug,
+    <QS::QuerySource as QuerySource>::DefaultSelection: core::fmt::Debug,
 {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("DefaultSelectClause")
             .field("default_selection", &self.default_selection)
             .finish()
@@ -76,7 +76,7 @@ pub trait SelectClauseExpression<QS> {
     type SelectClauseSqlType;
 }
 
-impl<T, QS> SelectClauseExpression<FromClause<QS>> for SelectClause<T>
+impl<T, QS, S> SelectClauseExpression<FromClause<QS, S>> for SelectClause<T>
 where
     QS: QuerySource,
     T: SelectableExpression<QS>,
@@ -93,9 +93,10 @@ where
     type SelectClauseSqlType = T::SqlType;
 }
 
-impl<QS> SelectClauseExpression<FromClause<QS>> for DefaultSelectClause<FromClause<QS>>
+impl<QS, S> SelectClauseExpression<FromClause<QS, S>> for DefaultSelectClause<FromClause<QS, S>>
 where
     QS: QuerySource,
+    S: SchemaName,
 {
     type Selection = QS::DefaultSelection;
     type SelectClauseSqlType = <Self::Selection as Expression>::SqlType;

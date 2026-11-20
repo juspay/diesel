@@ -3,9 +3,22 @@ use crate::schema::*;
 use diesel::result::DatabaseErrorKind::CheckViolation;
 use diesel::result::DatabaseErrorKind::{ForeignKeyViolation, NotNullViolation, UniqueViolation};
 use diesel::result::Error::DatabaseError;
+#[cfg(feature = "sqlite")]
+use diesel::sql_query;
 use diesel::*;
 
-#[test]
+// The table does not exist in the test database.
+table! {
+    missing_table {
+        id -> Integer,
+    }
+}
+
+// This test reads query results, which requires reading memory
+// allocated by the native sqlite library. Miri cannot track the
+// provenance of that memory when using `-Zmiri-native-lib`.
+#[cfg(not(miri))]
+#[diesel_test_helper::test]
 fn unique_constraints_are_detected() {
     let connection = &mut connection();
     insert_into(users::table)
@@ -19,7 +32,7 @@ fn unique_constraints_are_detected() {
     assert_matches!(failure, Err(DatabaseError(UniqueViolation, _)));
 }
 
-#[test]
+#[diesel_test_helper::test]
 #[cfg(feature = "postgres")]
 fn unique_constraints_report_correct_constraint_name() {
     let connection = &mut connection();
@@ -40,10 +53,7 @@ fn unique_constraints_report_correct_constraint_name() {
             assert_eq!(None, e.column_name());
             assert_eq!(Some("users_name"), e.constraint_name());
         }
-        _ => panic!(
-            "{:?} did not match Err(DatabaseError(UniqueViolation, e))",
-            failure
-        ),
+        _ => panic!("{failure:?} did not match Err(DatabaseError(UniqueViolation, e))"),
     };
 }
 
@@ -56,7 +66,11 @@ macro_rules! try_no_coerce {
     }};
 }
 
-#[test]
+// This test reads query results, which requires reading memory
+// allocated by the native sqlite library. Miri cannot track the
+// provenance of that memory when using `-Zmiri-native-lib`.
+#[cfg(not(miri))]
+#[diesel_test_helper::test]
 fn cached_prepared_statements_can_be_reused_after_error() {
     let connection = &mut connection_without_transaction();
     let user = User::new(1, "Sean");
@@ -73,7 +87,11 @@ fn cached_prepared_statements_can_be_reused_after_error() {
     connection.test_transaction(|connection| query.execute(connection));
 }
 
-#[test]
+// This test reads query results, which requires reading memory
+// allocated by the native sqlite library. Miri cannot track the
+// provenance of that memory when using `-Zmiri-native-lib`.
+#[cfg(not(miri))]
+#[diesel_test_helper::test]
 fn foreign_key_violation_detected() {
     let connection = &mut connection();
 
@@ -83,7 +101,7 @@ fn foreign_key_violation_detected() {
     assert_matches!(failure, Err(DatabaseError(ForeignKeyViolation, _)));
 }
 
-#[test]
+#[diesel_test_helper::test]
 #[cfg(feature = "postgres")]
 fn foreign_key_violation_correct_constraint_name() {
     let connection = &mut connection();
@@ -97,14 +115,279 @@ fn foreign_key_violation_correct_constraint_name() {
             assert_eq!(None, e.column_name());
             assert_eq!(Some("fk_tests_fk_id_fkey"), e.constraint_name());
         }
-        _ => panic!(
-            "{:?} did not match Err(DatabaseError(ForeignKeyViolation, e))",
-            failure
-        ),
+        _ => panic!("{failure:?} did not match Err(DatabaseError(ForeignKeyViolation, e))"),
     }
 }
 
-#[test]
+#[diesel_test_helper::test]
+#[cfg(feature = "postgres")]
+fn sqlstate_reports_the_code_of_a_mapped_error() {
+    use diesel::result::SqlStateClass;
+
+    let connection = &mut connection();
+
+    insert_into(users::table)
+        .values(&User::new(1, "Sean"))
+        .execute(connection)
+        .unwrap();
+    let failure = insert_into(users::table)
+        .values(&User::new(1, "Jim"))
+        .execute(connection);
+
+    match failure {
+        Err(DatabaseError(UniqueViolation, e)) => {
+            let code = e.sqlstate().unwrap();
+            assert_eq!(code.as_str(), "23505");
+            assert_eq!(code.class(), SqlStateClass::INTEGRITY_CONSTRAINT_VIOLATION);
+        }
+        other => panic!("{other:?} did not match Err(DatabaseError(UniqueViolation, e))"),
+    }
+}
+
+#[diesel_test_helper::test]
+#[cfg(feature = "postgres")]
+fn sqlstate_reports_the_code_of_an_unmapped_error() {
+    use diesel::result::DatabaseErrorKind::Unknown;
+
+    let connection = &mut connection();
+
+    let failure =
+        diesel::select(1.into_sql::<sql_types::Integer>() / 0.into_sql::<sql_types::Integer>())
+            .get_result::<i32>(connection);
+
+    match failure {
+        Err(DatabaseError(Unknown, e)) => {
+            assert_eq!(e.sqlstate().unwrap().as_str(), "22012");
+        }
+        other => panic!("{other:?} did not match Err(DatabaseError(Unknown, e))"),
+    }
+}
+
+#[diesel_test_helper::test]
+#[cfg(feature = "postgres")]
+fn sqlstate_reports_a_custom_code_raised_by_plpgsql() {
+    use diesel::result::DatabaseErrorKind::Unknown;
+
+    let connection = &mut connection();
+
+    // Raising an error with a custom code needs PL/pgSQL, which the DSL cannot express.
+    let failure = diesel::sql_query(
+        "DO $$ BEGIN RAISE EXCEPTION USING ERRCODE = 'P1001', MESSAGE = 'custom', DETAIL = 'kept'; END $$",
+    )
+    .execute(connection);
+
+    match failure {
+        Err(DatabaseError(Unknown, e)) => {
+            let code = e.sqlstate().unwrap();
+            assert_eq!(code.as_str(), "P1001");
+            assert_eq!(code.class().as_str(), "P1");
+            assert!(!code.class().is_standard());
+            assert_eq!(e.details(), Some("kept"));
+        }
+        other => panic!("{other:?} did not match Err(DatabaseError(Unknown, e))"),
+    }
+}
+
+#[diesel_test_helper::test]
+#[cfg(any(feature = "mysql", feature = "mariadb"))]
+fn sqlstate_reports_the_code_of_a_mapped_error_on_mysql_like() {
+    use diesel::mysql_like::sql_state;
+    use diesel::result::SqlStateClass;
+
+    let connection = &mut connection();
+
+    insert_into(users::table)
+        .values(&User::new(1, "Sean"))
+        .execute(connection)
+        .unwrap();
+    let failure = insert_into(users::table)
+        .values(&User::new(1, "Jim"))
+        .execute(connection);
+
+    match failure {
+        Err(DatabaseError(UniqueViolation, e)) => {
+            let code = e.sqlstate().unwrap();
+            assert_eq!(code.as_str(), "23000");
+            assert_eq!(code, sql_state::INTEGRITY_CONSTRAINT_VIOLATION);
+            assert_eq!(code.class(), SqlStateClass::INTEGRITY_CONSTRAINT_VIOLATION);
+        }
+        other => panic!("{other:?} did not match Err(DatabaseError(UniqueViolation, e))"),
+    }
+}
+
+#[diesel_test_helper::test]
+#[cfg(any(feature = "mysql", feature = "mariadb"))]
+fn sqlstate_reports_the_code_of_an_unmapped_error_on_mysql_like() {
+    use diesel::result::DatabaseErrorKind::Unknown;
+
+    let connection = &mut connection();
+
+    // The DSL cannot emit invalid SQL.
+    let failure = diesel::sql_query("SELECT id FROM users WHERE").execute(connection);
+
+    match failure {
+        Err(DatabaseError(Unknown, e)) => {
+            let code = e.sqlstate().unwrap();
+            assert_eq!(code.as_str(), "42000");
+            assert_eq!(
+                code,
+                diesel::mysql_like::sql_state::SYNTAX_ERROR_OR_ACCESS_RULE_VIOLATION
+            );
+        }
+        other => panic!("{other:?} did not match Err(DatabaseError(Unknown, e))"),
+    }
+}
+
+#[diesel_test_helper::test]
+#[cfg(any(feature = "mysql", feature = "mariadb"))]
+fn sqlstate_reports_a_custom_code_raised_by_signal() {
+    use diesel::connection::SimpleConnection;
+    use diesel::result::DatabaseErrorKind::Unknown;
+
+    let connection = &mut connection();
+
+    // MySQL rejects `SIGNAL` as a prepared statement, so it goes through the text protocol.
+    let failure = connection.batch_execute("SIGNAL SQLSTATE 'P1001' SET MESSAGE_TEXT = 'custom'");
+
+    match failure {
+        Err(DatabaseError(Unknown, e)) => {
+            let code = e.sqlstate().unwrap();
+            assert_eq!(code.as_str(), "P1001");
+            assert_eq!(code.class().as_str(), "P1");
+            assert!(!code.class().is_standard());
+            assert_eq!(e.message(), "custom");
+        }
+        other => panic!("{other:?} did not match Err(DatabaseError(Unknown, e))"),
+    }
+}
+
+#[diesel_test_helper::test]
+#[cfg(feature = "postgres")]
+fn native_code_is_none_on_postgres() {
+    use diesel::result::DatabaseErrorKind::Unknown;
+
+    let connection = &mut connection();
+
+    let failure =
+        diesel::select(1.into_sql::<sql_types::Integer>() / 0.into_sql::<sql_types::Integer>())
+            .get_result::<i32>(connection);
+
+    match failure {
+        Err(DatabaseError(Unknown, e)) => {
+            assert_eq!(e.native_code(), None);
+        }
+        other => panic!("{other:?} did not match Err(DatabaseError(Unknown, e))"),
+    }
+}
+
+#[diesel_test_helper::test]
+#[cfg(any(feature = "mysql", feature = "mariadb"))]
+fn native_code_reports_the_error_number_of_a_statement_error_on_mysql_like() {
+    use diesel::result::DatabaseErrorKind::Unknown;
+
+    let connection = &mut connection();
+
+    let failure = missing_table::table
+        .select(missing_table::id)
+        .execute(connection);
+
+    match failure {
+        Err(DatabaseError(Unknown, e)) => {
+            // ER_NO_SUCH_TABLE
+            assert_eq!(e.native_code(), Some(1146));
+        }
+        other => panic!("{other:?} did not match Err(DatabaseError(Unknown, e))"),
+    }
+}
+
+#[diesel_test_helper::test]
+#[cfg(any(feature = "mysql", feature = "mariadb"))]
+fn native_code_reports_the_error_number_of_a_raw_query_error_on_mysql_like() {
+    use diesel::connection::SimpleConnection;
+    use diesel::result::DatabaseErrorKind::Unknown;
+
+    let connection = &mut connection();
+
+    // The text protocol path cannot be driven through the typed DSL.
+    let failure = connection.batch_execute("SELECT id FROM missing_table");
+
+    match failure {
+        Err(DatabaseError(Unknown, e)) => {
+            // ER_NO_SUCH_TABLE
+            assert_eq!(e.native_code(), Some(1146));
+        }
+        other => panic!("{other:?} did not match Err(DatabaseError(Unknown, e))"),
+    }
+}
+
+// Miri cannot track the provenance of the error message sqlite allocates.
+#[cfg(not(miri))]
+#[diesel_test_helper::test]
+#[cfg(feature = "sqlite")]
+fn native_code_reports_the_result_code_of_a_sqlite_statement_error() {
+    use diesel::result::DatabaseErrorKind::Unknown;
+
+    let connection = &mut connection();
+
+    let failure = missing_table::table
+        .select(missing_table::id)
+        .execute(connection);
+
+    match failure {
+        Err(DatabaseError(Unknown, e)) => {
+            // SQLITE_ERROR
+            assert_eq!(e.native_code(), Some(1));
+        }
+        other => panic!("{other:?} did not match Err(DatabaseError(Unknown, e))"),
+    }
+}
+
+#[cfg_attr(
+    all(target_family = "wasm", target_os = "unknown"),
+    ignore = "no filesystem on this platform"
+)]
+// Miri with isolation enabled provides no file system.
+#[cfg(not(miri))]
+#[diesel_test_helper::test]
+#[cfg(feature = "sqlite")]
+fn native_code_reports_the_result_code_of_a_locked_sqlite_database() {
+    use diesel::connection::SimpleConnection;
+    use diesel::result::DatabaseErrorKind::Unknown;
+
+    table! {
+        locked_table {
+            id -> Integer,
+        }
+    }
+
+    let mut path = std::env::temp_dir();
+    path.push("diesel_test_sqlite_locked.db");
+    let _ = std::fs::remove_file(&path);
+    let url = format!("{}", path.display());
+
+    let mut holder = SqliteConnection::establish(&url).unwrap();
+    holder
+        .batch_execute("CREATE TABLE locked_table (id INTEGER PRIMARY KEY); BEGIN EXCLUSIVE;")
+        .unwrap();
+
+    let mut reader = SqliteConnection::establish(&url).unwrap();
+    let failure = locked_table::table
+        .select(locked_table::id)
+        .execute(&mut reader);
+
+    drop(reader);
+    holder.batch_execute("ROLLBACK").unwrap();
+
+    match failure {
+        Err(DatabaseError(Unknown, e)) => {
+            // SQLITE_BUSY
+            assert_eq!(e.native_code(), Some(5));
+        }
+        other => panic!("{other:?} did not match Err(DatabaseError(Unknown, e))"),
+    }
+}
+
+#[diesel_test_helper::test]
 #[cfg(feature = "postgres")]
 // This is a false positive as there is a side effect of this collect (spawning threads)
 #[allow(clippy::needless_collect)]
@@ -185,7 +468,7 @@ fn isolation_errors_are_detected() {
     assert_matches!(results[1], Err(DatabaseError(SerializationFailure, _)));
 }
 
-#[test]
+#[diesel_test_helper::test]
 #[cfg(not(feature = "sqlite"))]
 fn read_only_errors_are_detected() {
     use diesel::connection::SimpleConnection;
@@ -199,7 +482,11 @@ fn read_only_errors_are_detected() {
     assert_matches!(result, Err(DatabaseError(ReadOnlyTransaction, _)));
 }
 
-#[test]
+// This test reads query results, which requires reading memory
+// allocated by the native sqlite library. Miri cannot track the
+// provenance of that memory when using `-Zmiri-native-lib`.
+#[cfg(not(miri))]
+#[diesel_test_helper::test]
 fn not_null_constraints_are_detected() {
     let connection = &mut connection();
 
@@ -210,7 +497,7 @@ fn not_null_constraints_are_detected() {
     assert_matches!(failure, Err(DatabaseError(NotNullViolation, _)));
 }
 
-#[test]
+#[diesel_test_helper::test]
 #[cfg(feature = "postgres")]
 fn not_null_constraints_correct_column_name() {
     let connection = &mut connection();
@@ -224,16 +511,17 @@ fn not_null_constraints_correct_column_name() {
             assert_eq!(Some("users"), e.table_name());
             assert_eq!(Some("name"), e.column_name());
         }
-        _ => panic!(
-            "{:?} did not match Err(DatabaseError(NotNullViolation, e))",
-            failure
-        ),
+        _ => panic!("{failure:?} did not match Err(DatabaseError(NotNullViolation, e))"),
     };
 }
 
-#[test]
+#[diesel_test_helper::test]
 #[cfg(not(feature = "mysql"))]
 /// MySQL < 8.0.16 doesn't enforce check constraints
+// This test reads query results, which requires reading memory
+// allocated by the native sqlite library. Miri cannot track the
+// provenance of that memory when using `-Zmiri-native-lib`.
+#[cfg(not(miri))]
 fn check_constraints_are_detected() {
     let connection = &mut connection();
 
@@ -252,7 +540,7 @@ fn check_constraints_are_detected() {
     assert_matches!(failure, Err(DatabaseError(CheckViolation, _)));
 }
 
-#[test]
+#[diesel_test_helper::test]
 #[cfg(feature = "postgres")]
 fn check_constraints_correct_constraint_name() {
     let connection = &mut connection();
@@ -275,9 +563,74 @@ fn check_constraints_correct_constraint_name() {
             assert_eq!(None, e.column_name());
             assert_eq!(Some("pokes_poke_count_check"), e.constraint_name());
         }
-        _ => panic!(
-            "{:?} did not match Err(DatabaseError(CheckViolation, e))",
-            failure
-        ),
+        _ => panic!("{failure:?} did not match Err(DatabaseError(CheckViolation, e))"),
     };
+}
+
+// This test reads query results, which requires reading memory
+// allocated by the native sqlite library. Miri cannot track the
+// provenance of that memory when using `-Zmiri-native-lib`.
+#[cfg(not(miri))]
+#[diesel_test_helper::test]
+#[cfg(feature = "sqlite")]
+fn foreign_key_restrict_violation_detected() {
+    use diesel::connection::SimpleConnection;
+
+    let connection = &mut connection_without_transaction();
+
+    // Enable foreign keys for SQLite
+    connection
+        .batch_execute("PRAGMA foreign_keys = ON")
+        .unwrap();
+
+    // Create test tables with ON DELETE RESTRICT
+    sql_query("DROP TABLE IF EXISTS fk_restrict_child")
+        .execute(connection)
+        .unwrap();
+    sql_query("DROP TABLE IF EXISTS fk_restrict_parent")
+        .execute(connection)
+        .unwrap();
+
+    sql_query(
+        r#"
+        CREATE TABLE fk_restrict_parent (
+            id INTEGER PRIMARY KEY NOT NULL
+        )
+    "#,
+    )
+    .execute(connection)
+    .unwrap();
+
+    sql_query(
+        r#"
+        CREATE TABLE fk_restrict_child (
+            id INTEGER PRIMARY KEY NOT NULL,
+            parent_id INTEGER NOT NULL,
+            FOREIGN KEY (parent_id) REFERENCES fk_restrict_parent(id) ON DELETE RESTRICT
+        )
+    "#,
+    )
+    .execute(connection)
+    .unwrap();
+
+    // Insert parent and child records
+    sql_query("INSERT INTO fk_restrict_parent (id) VALUES (1)")
+        .execute(connection)
+        .unwrap();
+    sql_query("INSERT INTO fk_restrict_child (id, parent_id) VALUES (1, 1)")
+        .execute(connection)
+        .unwrap();
+
+    // Attempt to delete the parent should fail with ForeignKeyViolation
+    let failure = sql_query("DELETE FROM fk_restrict_parent WHERE id = 1").execute(connection);
+
+    assert_matches!(failure, Err(DatabaseError(ForeignKeyViolation, _)));
+
+    // Cleanup
+    sql_query("DROP TABLE IF EXISTS fk_restrict_child")
+        .execute(connection)
+        .unwrap();
+    sql_query("DROP TABLE IF EXISTS fk_restrict_parent")
+        .execute(connection)
+        .unwrap();
 }

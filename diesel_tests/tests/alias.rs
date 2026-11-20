@@ -1,7 +1,11 @@
 use crate::schema::*;
 use diesel::prelude::*;
 
-#[test]
+// This test reads query results, which requires reading memory
+// allocated by the native sqlite library. Miri cannot track the
+// provenance of that memory when using `-Zmiri-native-lib`.
+#[cfg(not(miri))]
+#[diesel_test_helper::test]
 fn selecting_basic_data() {
     let connection = &mut connection();
     diesel::sql_query("INSERT INTO users (name) VALUES ('Sean'), ('Tess')")
@@ -27,7 +31,7 @@ fn selecting_basic_data() {
     assert_eq!(expected_data, actual_data);
 }
 
-#[test]
+#[diesel_test_helper::test]
 fn ops_with_aliases() {
     // This test should fail to compile if the std::ops::{Add, Sub, ...} impls are missing for AliasedField.
     let likes_alias = alias!(likes as likes_alias);
@@ -46,7 +50,11 @@ fn ops_with_aliases() {
         .select(pokes_alias.field(pokes::poke_count) + likes_alias.field(likes::comment_id));
 }
 
-#[test]
+// This test reads query results, which requires reading memory
+// allocated by the native sqlite library. Miri cannot track the
+// provenance of that memory when using `-Zmiri-native-lib`.
+#[cfg(not(miri))]
+#[diesel_test_helper::test]
 fn select_multiple_from_join() {
     let connection = &mut connection_with_sean_and_tess_in_users_table();
 
@@ -160,7 +168,11 @@ fn select_multiple_from_join() {
         .unwrap();
 }
 
-#[test]
+// This test reads query results, which requires reading memory
+// allocated by the native sqlite library. Miri cannot track the
+// provenance of that memory when using `-Zmiri-native-lib`.
+#[cfg(not(miri))]
+#[diesel_test_helper::test]
 fn find_and_first() {
     let connection = &mut connection_with_sean_and_tess_in_users_table();
     let alias = alias!(users as users_alias);
@@ -173,7 +185,7 @@ fn find_and_first() {
     )
 }
 
-#[test]
+#[diesel_test_helper::test]
 fn boxed() {
     let connection = &mut connection_with_sean_and_tess_in_users_table();
 
@@ -192,7 +204,7 @@ fn boxed() {
     assert!(res.into_iter().all(|(a, (b, c))| a == b && a == c));
 }
 
-#[test]
+#[diesel_test_helper::test]
 fn visibility() {
     mod submodule {
         use super::*;
@@ -207,7 +219,11 @@ fn visibility() {
 
 // regression test for
 // https://github.com/diesel-rs/diesel/issues/3319
-#[test]
+// This test reads query results, which requires reading memory
+// allocated by the native sqlite library. Miri cannot track the
+// provenance of that memory when using `-Zmiri-native-lib`.
+#[cfg(not(miri))]
+#[diesel_test_helper::test]
 fn aliasing_with_group_by_and_primary_key() {
     let connection = &mut connection_with_sean_and_tess_in_users_table();
     let user_alias = alias!(users as user1);

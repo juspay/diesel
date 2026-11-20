@@ -2,7 +2,7 @@ use chrono::*;
 use diesel::query_dsl::LoadQuery;
 pub use quickcheck::quickcheck;
 
-pub use crate::schema::{connection_without_transaction, TestConnection};
+pub use crate::schema::{TestConnection, connection_without_transaction};
 #[cfg(not(feature = "sqlite"))]
 pub use diesel::data_types::*;
 pub use diesel::result::Error;
@@ -32,10 +32,11 @@ where
     let connection = &mut connection_without_transaction();
     let query = select(value.clone().into_sql::<ST>());
     let result = query.get_result::<T>(connection);
+    #[allow(clippy::print_stdout, reason = "Test code")]
     match result {
         Ok(res) => {
             if cmp(&value, &res) {
-                println!("{value:?}, {res:?}");
+                println!("value did not round-trip");
                 false
             } else {
                 true
@@ -46,8 +47,8 @@ where
         {
             true
         }
-        Err(e) => {
-            panic!("Query failed: {:?} -> value: {:?}", e, value)
+        Err(_) => {
+            panic!("type round-trip query failed")
         }
     }
 }
@@ -68,7 +69,12 @@ macro_rules! test_round_trip {
         test_round_trip!($test_name, $sql_type, $tpe, $map_fn, ne);
     };
     ($test_name:ident, $sql_type:ty, $tpe:ty, $map_fn:ident, $cmp: expr) => {
-        #[test]
+        // These are randomized quickcheck property tests: every case performs
+        // a full round trip through the database, which takes minutes per
+        // test when interpreted by miri. That would blow the miri job's time
+        // budget, so only run them outside of miri.
+        #[cfg(not(miri))]
+        #[diesel_test_helper::test]
         #[allow(clippy::type_complexity)]
         fn $test_name() {
             use diesel::sql_types::*;
@@ -115,7 +121,15 @@ test_round_trip!(i32_roundtrips, Integer, i32);
 test_round_trip!(i64_roundtrips, BigInt, i64);
 test_round_trip!(f32_roundtrips, Float, FloatWrapper, mk_f32, f32_ne);
 test_round_trip!(f64_roundtrips, Double, DoubleWrapper, mk_f64, f64_ne);
+// This test reads query results, which requires reading memory
+// allocated by the native sqlite library. Miri cannot track the
+// provenance of that memory when using `-Zmiri-native-lib`.
+#[cfg(not(miri))]
 test_round_trip!(string_roundtrips, VarChar, String);
+// This test reads query results, which requires reading memory
+// allocated by the native sqlite library. Miri cannot track the
+// provenance of that memory when using `-Zmiri-native-lib`.
+#[cfg(not(miri))]
 test_round_trip!(text_roundtrips, Text, String);
 test_round_trip!(binary_roundtrips, Binary, Vec<u8>);
 test_round_trip!(bool_roundtrips, Bool, bool);
@@ -124,11 +138,35 @@ test_round_trip!(bool_roundtrips, Bool, bool);
 mod sqlite_types {
     use super::*;
 
+    // This test reads query results, which requires reading memory
+    // allocated by the native sqlite library. Miri cannot track the
+    // provenance of that memory when using `-Zmiri-native-lib`.
+    #[cfg(not(miri))]
     test_round_trip!(date_roundtrips, Date, String);
+    // This test reads query results, which requires reading memory
+    // allocated by the native sqlite library. Miri cannot track the
+    // provenance of that memory when using `-Zmiri-native-lib`.
+    #[cfg(not(miri))]
     test_round_trip!(time_roundtrips, Time, String);
+    // This test reads query results, which requires reading memory
+    // allocated by the native sqlite library. Miri cannot track the
+    // provenance of that memory when using `-Zmiri-native-lib`.
+    #[cfg(not(miri))]
     test_round_trip!(timestamp_roundtrips, Timestamp, String);
+    // This test reads query results, which requires reading memory
+    // allocated by the native sqlite library. Miri cannot track the
+    // provenance of that memory when using `-Zmiri-native-lib`.
+    #[cfg(not(miri))]
     test_round_trip!(naive_time_roundtrips, Time, (u32, u32), mk_naive_time);
+    // This test reads query results, which requires reading memory
+    // allocated by the native sqlite library. Miri cannot track the
+    // provenance of that memory when using `-Zmiri-native-lib`.
+    #[cfg(not(miri))]
     test_round_trip!(naive_date_roundtrips, Date, u32, mk_naive_date);
+    // This test reads query results, which requires reading memory
+    // allocated by the native sqlite library. Miri cannot track the
+    // provenance of that memory when using `-Zmiri-native-lib`.
+    #[cfg(not(miri))]
     test_round_trip!(
         naive_datetime_roundtrips,
         Timestamp,
@@ -140,7 +178,6 @@ mod sqlite_types {
 #[cfg(feature = "postgres")]
 mod pg_types {
     extern crate ipnetwork;
-    extern crate uuid;
 
     use super::*;
     use bigdecimal::BigDecimal;
@@ -165,12 +202,6 @@ mod pg_types {
         Timestamptz,
         (i64, u32),
         mk_pg_naive_datetime
-    );
-    test_round_trip!(
-        uuid_roundtrips,
-        Uuid,
-        (u32, u16, u16, (u8, u8, u8, u8, u8, u8, u8, u8)),
-        mk_uuid
     );
     test_round_trip!(array_of_int_roundtrips, Array<Integer>, Vec<i32>);
     test_round_trip!(array_of_bigint_roundtrips, Array<BigInt>, Vec<i64>);
@@ -299,12 +330,7 @@ mod pg_types {
 
     test_round_trip!(char_roundtrips, CChar, u8);
 
-    #[allow(clippy::type_complexity)]
-    fn mk_uuid(data: (u32, u16, u16, (u8, u8, u8, u8, u8, u8, u8, u8))) -> self::uuid::Uuid {
-        let a = data.3;
-        let b = [a.0, a.1, a.2, a.3, a.4, a.5, a.6, a.7];
-        uuid::Uuid::from_fields(data.0, data.1, data.2, &b)
-    }
+    test_round_trip!(pg_lsn_roundtrips, PgLsn, u64, mk_pg_lsn);
 
     fn mk_macaddr(data: (u8, u8, u8, u8, u8, u8)) -> [u8; 6] {
         [data.0, data.1, data.2, data.3, data.4, data.5]
@@ -472,9 +498,34 @@ mod pg_types {
     pub fn mk_datetime(data: (i64, u32)) -> DateTime<Utc> {
         Utc.from_utc_datetime(&mk_pg_naive_datetime(data))
     }
+
+    pub fn mk_pg_lsn(data: u64) -> PgLsn {
+        PgLsn(data)
+    }
 }
 
-#[cfg(feature = "mysql")]
+#[cfg(any(feature = "postgres", feature = "mariadb"))]
+mod uuid {
+    extern crate uuid;
+
+    use super::*;
+
+    test_round_trip!(
+        uuid_roundtrips,
+        Uuid,
+        (u32, u16, u16, (u8, u8, u8, u8, u8, u8, u8, u8)),
+        mk_uuid
+    );
+
+    #[allow(clippy::type_complexity)]
+    fn mk_uuid(data: (u32, u16, u16, (u8, u8, u8, u8, u8, u8, u8, u8))) -> self::uuid::Uuid {
+        let a = data.3;
+        let b = [a.0, a.1, a.2, a.3, a.4, a.5, a.6, a.7];
+        uuid::Uuid::from_fields(data.0, data.1, data.2, &b)
+    }
+}
+
+#[cfg(any(feature = "mysql", feature = "mariadb"))]
 mod mysql_types {
     use super::*;
 
@@ -738,7 +789,7 @@ pub fn mk_naive_time((mut seconds, mut nano): (u32, u32)) -> NaiveTime {
     NaiveTime::from_num_seconds_from_midnight_opt(seconds, nano).unwrap()
 }
 
-#[cfg(any(feature = "postgres", feature = "mysql"))]
+#[cfg(any(feature = "postgres", feature = "mysql", feature = "mariadb"))]
 fn mk_bigdecimal(data: (i64, u64)) -> bigdecimal::BigDecimal {
     format!("{}.{}", data.0, data.1)
         .parse()
@@ -755,7 +806,7 @@ pub fn mk_naive_date(days: u32) -> NaiveDate {
     earliest_pg_date + Duration::try_days(days as i64 % num_days_representable).unwrap()
 }
 
-#[cfg(feature = "mysql")]
+#[cfg(any(feature = "mysql", feature = "mariadb"))]
 pub fn mk_naive_date(days: u32) -> NaiveDate {
     let earliest_mysql_date = NaiveDate::from_ymd_opt(1000, 1, 1).unwrap();
     let latest_mysql_date = NaiveDate::from_ymd_opt(9999, 12, 31).unwrap();
@@ -785,7 +836,9 @@ fn mk_f32(f: FloatWrapper) -> f32 {
 impl quickcheck::Arbitrary for FloatWrapper {
     fn arbitrary(g: &mut quickcheck::Gen) -> Self {
         let mut f = f32::arbitrary(g);
-        while (cfg!(feature = "sqlite") || cfg!(feature = "mysql")) && f.is_nan() {
+        while (cfg!(feature = "sqlite") || cfg!(feature = "mysql") || cfg!(feature = "mariadb"))
+            && f.is_nan()
+        {
             f = f32::arbitrary(g);
         }
         FloatWrapper(f)
@@ -802,25 +855,27 @@ fn mk_f64(f: DoubleWrapper) -> f64 {
 impl quickcheck::Arbitrary for DoubleWrapper {
     fn arbitrary(g: &mut quickcheck::Gen) -> Self {
         let mut f = f64::arbitrary(g);
-        while (cfg!(feature = "sqlite") || cfg!(feature = "mysql")) && f.is_nan() {
+        while (cfg!(feature = "sqlite") || cfg!(feature = "mysql") || cfg!(feature = "mariadb"))
+            && f.is_nan()
+        {
             f = f64::arbitrary(g);
         }
         DoubleWrapper(f)
     }
 }
 
-#[cfg(any(feature = "postgres", feature = "mysql"))]
+#[cfg(any(feature = "postgres", feature = "mysql", feature = "mariadb"))]
 #[derive(Clone, Debug)]
 struct SerdeWrapper(serde_json::Value);
 
-#[cfg(any(feature = "postgres", feature = "mysql"))]
+#[cfg(any(feature = "postgres", feature = "mysql", feature = "mariadb"))]
 impl quickcheck::Arbitrary for SerdeWrapper {
     fn arbitrary(g: &mut quickcheck::Gen) -> Self {
         SerdeWrapper(arbitrary_serde(g, 0))
     }
 }
 
-#[cfg(any(feature = "postgres", feature = "mysql"))]
+#[cfg(any(feature = "postgres", feature = "mysql", feature = "mariadb"))]
 fn arbitrary_serde(g: &mut quickcheck::Gen, depth: usize) -> serde_json::Value {
     use quickcheck::Arbitrary;
 
@@ -873,7 +928,7 @@ fn arbitrary_serde(g: &mut quickcheck::Gen, depth: usize) -> serde_json::Value {
     }
 }
 
-#[cfg(any(feature = "postgres", feature = "mysql"))]
+#[cfg(any(feature = "postgres", feature = "mysql", feature = "mariadb"))]
 fn mk_serde_json(data: SerdeWrapper) -> serde_json::Value {
     data.0
 }

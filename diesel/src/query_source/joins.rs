@@ -1,9 +1,10 @@
-use super::{AppearsInFromClause, Plus};
+use super::{AppearsInFromClause, Plus, QueryRelation};
 use crate::backend::Backend;
 use crate::backend::DieselReserveSpecialization;
 use crate::expression::grouped::Grouped;
 use crate::expression::nullable::Nullable;
 use crate::prelude::*;
+use crate::query_builder::from_clause::SchemaName;
 use crate::query_builder::*;
 use crate::query_dsl::InternalJoinDsl;
 use crate::sql_types::BoolOrNullableBool;
@@ -43,15 +44,15 @@ where
 {
 }
 
-impl<Left, Right, Kind> std::fmt::Debug for Join<Left, Right, Kind>
+impl<Left, Right, Kind> core::fmt::Debug for Join<Left, Right, Kind>
 where
     Left: QuerySource,
-    FromClause<Left>: std::fmt::Debug,
+    FromClause<Left>: core::fmt::Debug,
     Right: QuerySource,
-    FromClause<Right>: std::fmt::Debug,
-    Kind: std::fmt::Debug,
+    FromClause<Right>: core::fmt::Debug,
+    Kind: core::fmt::Debug,
 {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("Join")
             .field("left", &self.left)
             .field("right", &self.right)
@@ -208,6 +209,22 @@ where
         self.right.from_clause.walk_ast(out.reborrow())?;
         Ok(())
     }
+
+    fn walk_ast_with_schema<'b>(
+        &'b self,
+        schema: &str,
+        mut out: AstPass<'_, 'b, DB>,
+    ) -> QueryResult<()> {
+        self.left
+            .from_clause
+            .walk_ast_with_schema(schema, out.reborrow())?;
+        self.kind.walk_ast(out.reborrow())?;
+        out.push_sql(" JOIN ");
+        self.right
+            .from_clause
+            .walk_ast_with_schema(schema, out.reborrow())?;
+        Ok(())
+    }
 }
 
 /// Indicates that two tables can be joined without an explicit `ON` clause.
@@ -223,6 +240,11 @@ where
 /// [`joinable!`]: crate::joinable!
 /// [`.on`]: crate::query_dsl::JoinOnDsl::on()
 /// [`inner_join`]: crate::query_dsl::QueryDsl::inner_join()
+#[diagnostic::on_unimplemented(
+    message = "cannot join `{T}` to `{Self}` due to missing relation",
+    note = "joining tables directly either requires a `diesel::joinable!` definition \
+            or calling `JoinOnDsl::on` to manually specify the `ON` clause of the join`"
+)]
 pub trait JoinTo<T> {
     #[doc(hidden)]
     type FromClause;
@@ -243,7 +265,10 @@ pub trait AppendSelection<Selection> {
     fn append_selection(&self, selection: Selection) -> Self::Output;
 }
 
-impl<T: Table, Selection> AppendSelection<Selection> for T {
+impl<T, Selection> AppendSelection<Selection> for T
+where
+    T: QueryRelation,
+{
     type Output = (T::AllColumns, Selection);
 
     fn append_selection(&self, selection: Selection) -> Self::Output {
@@ -360,7 +385,7 @@ impl<Source, On> OnClauseWrapper<Source, On> {
 
 impl<Lhs, Rhs, On> JoinTo<OnClauseWrapper<Rhs, On>> for Lhs
 where
-    Lhs: Table,
+    Lhs: QueryRelation,
 {
     type FromClause = Rhs;
     type OnClause = On;
@@ -427,15 +452,16 @@ where
     type InnerJoin = JoinOn<Join::InnerJoin, On>;
 }
 
-impl<From> ToInnerJoin for SelectStatement<FromClause<From>>
+impl<From, Schema> ToInnerJoin for SelectStatement<FromClause<From, Schema>>
 where
     From: ToInnerJoin + QuerySource,
     From::InnerJoin: QuerySource,
+    Schema: SchemaName,
 {
-    type InnerJoin = SelectStatement<FromClause<From::InnerJoin>>;
+    type InnerJoin = SelectStatement<FromClause<From::InnerJoin, Schema>>;
 }
 
-impl<T: Table> ToInnerJoin for T {
+impl<T: QueryRelation> ToInnerJoin for T {
     type InnerJoin = T;
 }
 

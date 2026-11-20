@@ -1,3 +1,5 @@
+#[cfg(any(feature = "mysql", feature = "mariadb", feature = "postgres"))]
+use super::consts;
 use super::Bencher;
 use diesel::*;
 
@@ -6,6 +8,9 @@ type TestConnection = PgConnection;
 
 #[cfg(feature = "mysql")]
 type TestConnection = MysqlConnection;
+
+#[cfg(feature = "mariadb")]
+type TestConnection = MariadbConnection;
 
 #[cfg(feature = "sqlite")]
 type TestConnection = SqliteConnection;
@@ -102,11 +107,11 @@ pub struct Comment {
     text: String,
 }
 
-#[derive(Debug, Clone, Copy, Insertable)]
+#[derive(Debug, Clone, Insertable)]
 #[diesel(table_name = comments)]
-pub struct NewComment<'a>(
+pub struct NewComment(
     #[diesel(column_name = post_id)] pub i32,
-    #[diesel(column_name = text)] pub &'a str,
+    #[diesel(column_name = text)] pub String,
 );
 
 #[cfg(feature = "mysql")]
@@ -116,21 +121,22 @@ fn connection() -> TestConnection {
         .or_else(|_| dotenvy::var("DATABASE_URL"))
         .expect("DATABASE_URL must be set in order to run tests");
     let mut conn = MysqlConnection::establish(&connection_url).unwrap();
-    diesel::sql_query("SET FOREIGN_KEY_CHECKS = 0")
-        .execute(&mut conn)
-        .unwrap();
-    diesel::sql_query("TRUNCATE TABLE comments")
-        .execute(&mut conn)
-        .unwrap();
-    diesel::sql_query("TRUNCATE TABLE posts")
-        .execute(&mut conn)
-        .unwrap();
-    diesel::sql_query("TRUNCATE TABLE users")
-        .execute(&mut conn)
-        .unwrap();
-    diesel::sql_query("SET FOREIGN_KEY_CHECKS = 1")
-        .execute(&mut conn)
-        .unwrap();
+    for query in consts::mysql::CLEANUP_QUERIES {
+        diesel::sql_query(*query).execute(&mut conn).unwrap();
+    }
+    conn
+}
+
+#[cfg(feature = "mariadb")]
+fn connection() -> TestConnection {
+    dotenvy::dotenv().ok();
+    let connection_url = dotenvy::var("MARIADB_DATABASE_URL")
+        .or_else(|_| dotenvy::var("DATABASE_URL"))
+        .expect("DATABASE_URL must be set in order to run tests");
+    let mut conn = MariadbConnection::establish(&connection_url).unwrap();
+    for query in consts::mariadb::CLEANUP_QUERIES {
+        diesel::sql_query(*query).execute(&mut conn).unwrap();
+    }
     conn
 }
 
@@ -141,15 +147,9 @@ fn connection() -> TestConnection {
         .or_else(|_| dotenvy::var("DATABASE_URL"))
         .expect("DATABASE_URL must be set in order to run tests");
     let mut conn = PgConnection::establish(&connection_url).unwrap();
-    diesel::sql_query("TRUNCATE TABLE comments CASCADE")
-        .execute(&mut conn)
-        .unwrap();
-    diesel::sql_query("TRUNCATE TABLE posts CASCADE")
-        .execute(&mut conn)
-        .unwrap();
-    diesel::sql_query("TRUNCATE TABLE users CASCADE")
-        .execute(&mut conn)
-        .unwrap();
+    for query in consts::postgres::CLEANUP_QUERIES {
+        diesel::sql_query(*query).execute(&mut conn).unwrap();
+    }
     conn
 }
 
@@ -309,7 +309,7 @@ pub fn bench_medium_complex_query_queryable_by_name(b: &mut Bencher, size: usize
     }
     #[cfg(feature = "postgres")]
     let bind = "$1";
-    #[cfg(any(feature = "mysql", feature = "sqlite"))]
+    #[cfg(any(feature = "mysql", feature = "mariadb", feature = "sqlite"))]
     let bind = "?";
 
     let query = format!(
@@ -365,6 +365,7 @@ pub fn loading_associations_sequentially(b: &mut Bencher) {
     });
 
     let all_users = users::table.load::<User>(&mut conn).unwrap();
+    assert_eq!(USER_NUMBER, all_users.len());
     let data: Vec<_> = all_users
         .iter()
         .flat_map(|user| {
@@ -375,38 +376,49 @@ pub fn loading_associations_sequentially(b: &mut Bencher) {
             })
         })
         .collect();
+    assert_eq!(data.len(), USER_NUMBER * 10);
     insert_into(posts::table)
         .values(&data)
         .execute(&mut conn)
         .unwrap();
     let all_posts = posts::table.load::<Post>(&mut conn).unwrap();
-    let data: Vec<_> = all_posts
+    assert_eq!(all_posts.len(), data.len());
+    let comment_data: Vec<_> = all_posts
         .iter()
         .flat_map(|post| {
             let post_id = post.id;
             (0..10).map(move |i| {
                 let title = format!("Comment {} on post {}", i, post_id);
-                (title, post_id)
+                NewComment(post_id, title)
             })
         })
         .collect();
-    let comment_data: Vec<_> = data
-        .iter()
-        .map(|&(ref title, post_id)| NewComment(post_id, &title))
-        .collect();
+    assert_eq!(comment_data.len(), all_posts.len() * 10);
+    assert_eq!(comment_data.len(), USER_NUMBER * 10 * 10);
     insert_into(comments::table)
         .values(&comment_data)
         .execute(&mut conn)
         .unwrap();
+    let count = comments::table
+        .count()
+        .get_result::<i64>(&mut conn)
+        .unwrap();
+    assert_eq!(count as usize, comment_data.len());
 
+    let user_count = all_users.len();
+    let post_count = all_posts.len();
+    let comment_count = count as usize;
     // ACTUAL BENCHMARK
     b.iter(|| {
         let users = users::table.load::<User>(&mut conn).unwrap();
+        assert_eq!(users.len(), user_count);
         let posts = Post::belonging_to(&users).load::<Post>(&mut conn).unwrap();
+        assert_eq!(posts.len(), post_count);
         let comments = Comment::belonging_to(&posts)
             .load::<Comment>(&mut conn)
-            .unwrap()
-            .grouped_by(&posts);
+            .unwrap();
+        assert_eq!(comments.len(), comment_count);
+        let comments = comments.grouped_by(&posts);
         let posts_and_comments = posts.into_iter().zip(comments).grouped_by(&users);
         users
             .into_iter()

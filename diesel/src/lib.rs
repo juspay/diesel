@@ -1,3 +1,4 @@
+#![cfg_attr(not(feature = "std"), no_std)]
 //! # Diesel
 //!
 //! Diesel is an ORM and query builder designed to reduce the boilerplate for database interactions.
@@ -97,41 +98,41 @@
 //! The following error messages are common:
 //!
 //! * `the trait bound (diesel::sql_types::Integer, …, diesel::sql_types::Text): load_dsl::private::CompatibleType<YourModel, Pg> is not satisfied`
-//!    while trying to execute a query:
-//!    This error indicates a mismatch between what your query returns and what your model struct
-//!    expects the query to return. The fields need to match in terms of field order, field type
-//!    and field count. If you are sure that everything matches, double check the enabled diesel
-//!    features (for support for types from other crates) and double check (via `cargo tree`)
-//!    that there is only one version of such a shared crate in your dependency tree.
-//!    Consider using [`#[derive(Selectable)]`](derive@crate::prelude::Selectable) +
-//!    `#[diesel(check_for_backend(diesel::pg::Pg))]`
-//!    to improve the generated error message.
+//!   while trying to execute a query:
+//!   This error indicates a mismatch between what your query returns and what your model struct
+//!   expects the query to return. The fields need to match in terms of field order, field type
+//!   and field count. If you are sure that everything matches, double check the enabled diesel
+//!   features (for support for types from other crates) and double check (via `cargo tree`)
+//!   that there is only one version of such a shared crate in your dependency tree.
+//!   Consider using [`#[derive(Selectable)]`](derive@crate::prelude::Selectable) +
+//!   `#[diesel(check_for_backend(diesel::pg::Pg))]`
+//!   to improve the generated error message.
 //! * `the trait bound i32: diesel::Expression is not satisfied` in the context of `Insertable`
-//!    model structs:
-//!    This error indicates a type mismatch between the field you are trying to insert into the database
-//!    and the actual database type. These error messages contain a line
-//!    like ` = note: required for i32 to implement AsExpression<diesel::sql_types::Text>`
-//!    that show both the provided rust side type (`i32` in that case) and the expected
-//!    database side type (`Text` in that case).
+//!   model structs:
+//!   This error indicates a type mismatch between the field you are trying to insert into the database
+//!   and the actual database type. These error messages contain a line
+//!   like ` = note: required for i32 to implement AsExpression<diesel::sql_types::Text>`
+//!   that show both the provided rust side type (`i32` in that case) and the expected
+//!   database side type (`Text` in that case).
 //! * `the trait bound i32: AppearsOnTable<users::table> is not satisfied` in the context of `AsChangeset`
-//!    model structs:
-//!    This error indicates a type mismatch between the field you are trying to update and the actual
-//!    database type. Double check your type mapping.
+//!   model structs:
+//!   This error indicates a type mismatch between the field you are trying to update and the actual
+//!   database type. Double check your type mapping.
 //! * `the trait bound SomeLargeType: QueryFragment<Sqlite, SomeMarkerType> is not satisfied` while
-//!    trying to execute a query.
-//!    This error message indicates that a given query is not supported by your backend. This usually
-//!    means that you are trying to use SQL features from one SQL dialect on a different database
-//!    system. Double check your query that everything required is supported by the selected
-//!    backend. If that's the case double check that the relevant feature flags are enabled
-//!    (for example, `returning_clauses_for_sqlite_3_35` for enabling support for returning clauses in newer
-//!    sqlite versions)
+//!   trying to execute a query.
+//!   This error message indicates that a given query is not supported by your backend. This usually
+//!   means that you are trying to use SQL features from one SQL dialect on a different database
+//!   system. Double check your query that everything required is supported by the selected
+//!   backend. If that's the case double check that the relevant feature flags are enabled
+//!   (for example, `returning_clauses_for_sqlite_3_35` for enabling support for returning clauses in newer
+//!   sqlite versions)
 //! * `the trait bound posts::title: SelectableExpression<users::table> is not satisfied` while
-//!    executing a query:
-//!    This error message indicates that you're trying to select a field from a table
-//!    that does not appear in your from clause. If your query joins the relevant table via
-//!    [`left_join`](crate::query_dsl::QueryDsl::left_join) you need to call
-//!    [`.nullable()`](crate::expression_methods::NullableExpressionMethods::nullable)
-//!    on the relevant column in your select clause.
+//!   executing a query:
+//!   This error message indicates that you're trying to select a field from a table
+//!   that does not appear in your from clause. If your query joins the relevant table via
+//!   [`left_join`](crate::query_dsl::QueryDsl::left_join) you need to call
+//!   [`.nullable()`](crate::expression_methods::NullableExpressionMethods::nullable)
+//!   on the relevant column in your select clause.
 //!
 //!
 //! ## Getting help
@@ -156,6 +157,8 @@
 //!   [dependencies]
 //!   libsqlite3-sys = { version = "0.29", features = ["bundled"] }
 //!   ```
+//! - `sqlite-no-std` A diesel sqlite backend for no-std environments. This is mostly the same as the `sqlite` backend,
+//!   but it doesn't enable the `std` feature flag
 //! - `postgres`: This feature enables the diesel postgres backend. This features implies `postgres_backend`
 //!   Enabling this feature requires a compatible copy of `libpq` for your target architecture.
 //!   Alternatively, you can add `pq-sys` with the `bundled` feature as a dependency to your
@@ -171,7 +174,11 @@
 //!   crate so libmysqlclient will be bundled:
 //!   ```toml
 //!   [dependencies]
-//!   mysqlclient-sys = { version = "0.4", features = ["bundled"] }
+//!   mysqlclient-sys = { version = "0.5", features = ["bundled"] }
+//!   openssl-sys = { version = "0.9.100", features = ["vendored"] }
+//!   ```
+//! - `mariadb`: This feature enables the diesel mariadb backend. This feature implies `mariadb_backend`.
+//!   Enabling this feature requires a compatible copy of `libmysqlclient` or `libmariadb` for your target architecture.
 //! - `postgres_backend`: This feature enables those parts of diesels postgres backend, that are not dependent
 //!   on `libpq`. Diesel does not provide any connection implementation with only this feature enabled.
 //!   This feature can be used to implement a custom implementation of diesels `Connection` trait for the
@@ -182,6 +189,11 @@
 //!   This feature can be used to implement a custom implementation of diesels `Connection` trait for the
 //!   mysql backend outside of diesel itself, while reusing the existing query dsl extensions for the
 //!   mysql backend
+//! - `mariadb_backend`: This feature enables those parts of diesels mariadb backend, that are not dependent
+//!   on `libmysqlclient`. Diesel does not provide any connection implementation with only this feature enabled.
+//!   This feature can be used to implement a custom implementation of diesels `Connection` trait for the
+//!   mariadb backend outside of diesel itself, while reusing the existing query dsl extensions for the
+//!   mariadb backend
 //! - `returning_clauses_for_sqlite_3_35`: This feature enables support for `RETURNING` clauses in the sqlite backend.
 //!   Enabling this feature requires sqlite 3.35.0 or newer.
 //! - `32-column-tables`: This feature enables support for tables with up to 32 columns.
@@ -192,6 +204,12 @@
 //!   `32-column-tables` feature. Enabling this feature will increase your compile times.
 //! - `128-column-tables`: This feature enables support for tables with up to 128 columns. It implies the
 //!   `64-column-tables` feature. Enabling this feature will increase your compile times significantly.
+//! - `custom-count-column-tables`: This feature allows to customize the number of columns
+//!   supported by diesel by setting the `DIESEL_MAX_COLUMN_COUNT` environment variable to the desired
+//!   value. It is meant to be used if the other `*-column-tables` features do not fit your use-case.
+//!   Keep in mind that larger values increase the compile times for Diesel significantly.
+//!   For a greater convenience this environment variable can also be set in a `.cargo/config.toml`
+//!   file as described in the [cargo documentation](https://doc.rust-lang.org/cargo/reference/config.html#env).
 //! - `i-implement-a-third-party-backend-and-opt-into-breaking-changes`: This feature opens up some otherwise
 //!   private API, that can be useful to implement a third party [`Backend`](crate::backend::Backend)
 //!   or write a custom [`Connection`] implementation. **Do not use this feature for
@@ -220,14 +238,25 @@
 //!   explicitly opts out the stability guarantee given by diesel. This feature overrides the `with-deprecated`.
 //!   Note that this may also remove items that are not shown as `#[deprecated]` in our documentation, due to
 //!   various bugs in rustdoc. It can be used to check if you depend on any such hidden `#[deprecated]` item.
+//! - `std`: This features enables usage of the rust standard library. When disabled Diesel will only use the `core`
+//!   and `alloc` crate instead. If this feature is disabled it is required to enable the `hashbrown` feature.
+//! - `hashbrown`: This feature enables an optional dependency on the hashbrown crate. It's required for usage in `no_std`
+//!   environments.
 //!
 //! By default the following features are enabled:
 //!
 //! - `with-deprecated`
 //! - `32-column-tables`
+//! - `std`
 
 #![cfg_attr(feature = "unstable", feature(trait_alias))]
-#![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg))]
+#![cfg_attr(feature = "unstable", feature(strict_provenance_lints))]
+#![cfg_attr(
+    feature = "unstable",
+    warn(fuzzy_provenance_casts, lossy_provenance_casts)
+)]
+#![cfg_attr(diesel_docsrs, feature(doc_cfg, rustdoc_internals))]
+#![cfg_attr(diesel_docsrs, expect(internal_features))]
 #![cfg_attr(feature = "128-column-tables", recursion_limit = "256")]
 // Built-in Lints
 #![warn(
@@ -260,9 +289,15 @@
     clippy::cast_possible_truncation,
     clippy::cast_sign_loss
 )]
+#![cfg_attr(
+    not(test),
+    warn(clippy::std_instead_of_alloc, clippy::std_instead_of_core)
+)]
 #![deny(unsafe_code)]
-#![cfg_attr(test, allow(clippy::map_unwrap_or, clippy::unwrap_used))]
+#![cfg_attr(test, allow(clippy::unwrap_used))]
 
+extern crate alloc;
+extern crate core;
 extern crate diesel_derives;
 
 #[macro_use]
@@ -280,6 +315,7 @@ pub mod test_helpers;
 
 pub mod associations;
 pub mod backend;
+pub mod collation;
 pub mod connection;
 pub mod data_types;
 pub mod deserialize;
@@ -301,14 +337,23 @@ pub mod sql_types;
 pub mod migration;
 pub mod row;
 
+#[cfg(any(feature = "mysql_backend", feature = "mariadb_backend"))]
+pub mod mysql_like;
+
 #[cfg(feature = "mysql_backend")]
 pub mod mysql;
+
+#[cfg(feature = "mariadb_backend")]
+pub mod mariadb;
 #[cfg(feature = "postgres_backend")]
 pub mod pg;
-#[cfg(feature = "sqlite")]
+#[cfg(feature = "__sqlite-shared")]
 pub mod sqlite;
 
+#[macro_use]
+mod reexport_ambiguities;
 mod type_impls;
+pub mod types;
 mod util;
 
 #[doc(hidden)]
@@ -321,16 +366,17 @@ pub use diesel_derives::{
 
 pub use diesel_derives::MultiConnection;
 
-#[allow(unknown_lints, ambiguous_glob_reexports)]
 pub mod dsl {
     //! Includes various helper types and bare functions which are named too
     //! generically to be included in prelude, but are often used when using Diesel.
 
+    make_proxy_mod!(helper_types_proxy, crate::helper_types);
     #[doc(inline)]
-    pub use crate::helper_types::*;
+    pub use helper_types_proxy::*;
 
+    make_proxy_mod!(expression_dsl_proxy, crate::expression::dsl);
     #[doc(inline)]
-    pub use crate::expression::dsl::*;
+    pub use expression_dsl_proxy::*;
 
     #[doc(inline)]
     pub use crate::query_builder::functions::{
@@ -365,7 +411,7 @@ pub mod helper_types {
     //! `users.filter(first_name.eq("John")).order(last_name.asc()).limit(10)` would
     //! be `Limit<Order<FindBy<users, first_name, &str>, Asc<last_name>>>`
     use super::query_builder::combination_clause::{self, CombinationClause};
-    use super::query_builder::{locking_clause as lock, AsQuery};
+    use super::query_builder::{AsQuery, locking_clause as lock};
     use super::query_dsl::methods::*;
     use super::query_dsl::*;
     use super::query_source::{aliasing, joins};
@@ -475,6 +521,9 @@ pub mod helper_types {
 
     /// Represents the return type of [`.into_boxed::<'a, DB>()`](crate::prelude::QueryDsl::into_boxed)
     pub type IntoBoxed<'a, Source, DB> = <Source as BoxedDsl<'a, DB>>::Output;
+
+    /// Represents the return type of [`.into_boxed_clone::<'a, DB>()`](crate::prelude::QueryDsl::into_boxed_clone)
+    pub type IntoBoxedClone<'a, Source, DB> = <Source as BoxedCloneDsl<'a, DB>>::Output;
 
     /// Represents the return type of [`.distinct()`](crate::prelude::QueryDsl::distinct)
     pub type Distinct<Source> = <Source as DistinctDsl>::Output;
@@ -690,25 +739,80 @@ pub mod helper_types {
     >;
 
     /// Represents the return type of
-    /// [`UpdateStatement::set()`](crate::query_builder::UpdateStatement::set)
-    pub type Set<U, V> = crate::query_builder::UpdateStatement<
-        <U as crate::query_builder::update_statement::UpdateAutoTypeHelper>::Table,
-        <U as crate::query_builder::update_statement::UpdateAutoTypeHelper>::Where,
-        <V as crate::AsChangeset>::Changeset,
+    /// [`InsertStatement::on_conflict()`](crate::query_builder::InsertStatement::on_conflict)
+    pub type OnConflict<I, Target> = crate::upsert::IncompleteOnConflict<
+        crate::query_builder::InsertStatement<
+            <I as crate::query_builder::insert_statement::InsertAutoTypeHelper>::Table,
+            <<I as crate::query_builder::insert_statement::InsertAutoTypeHelper>::Values as crate::query_builder::IntoConflictValueClause>::ValueClause,
+            <I as crate::query_builder::insert_statement::InsertAutoTypeHelper>::Op,
+            <I as crate::query_builder::insert_statement::InsertAutoTypeHelper>::Ret,
+            <I as crate::query_builder::insert_statement::InsertAutoTypeHelper>::Schema,
+        >,
+        crate::query_builder::ConflictTarget<Target>,
+        >;
+
+    /// Represents the return type of [`InsertStatement::on_conflict_do_nothing`](crate::query_builder::InsertStatement::on_conflict_do_nothing)
+    pub type OnConflictDoNothing<I> = crate::query_builder::InsertStatement<
+        <I as crate::query_builder::insert_statement::InsertAutoTypeHelper>::Table,
+        crate::query_builder::upsert::on_conflict_clause::OnConflictValues<
+            <<I as crate::query_builder::insert_statement::InsertAutoTypeHelper>::Values as crate::query_builder::IntoConflictValueClause>::ValueClause,
+            crate::query_builder::upsert::on_conflict_target::NoConflictTarget,
+            crate::query_builder::upsert::on_conflict_actions::DoNothing<
+                <I as crate::query_builder::insert_statement::InsertAutoTypeHelper>::Table,
+            >,
+        >,
+        <I as crate::query_builder::insert_statement::InsertAutoTypeHelper>::Op,
+        <I as crate::query_builder::insert_statement::InsertAutoTypeHelper>::Ret,
+        <I as crate::query_builder::insert_statement::InsertAutoTypeHelper>::Schema,
     >;
+
+    /// Represents the return type of
+    /// [`IncompleteOnConflict::do_nothing()`](crate::upsert::IncompleteOnConflict::do_nothing)
+    pub type DoNothing<I> = crate::query_builder::InsertStatement<
+        <I as crate::upsert::OnConflictHelper>::Table,
+        crate::query_builder::upsert::on_conflict_clause::OnConflictValues<
+            <I as crate::upsert::OnConflictHelper>::Values,
+            <I as crate::upsert::OnConflictHelper>::Target,
+            crate::query_builder::upsert::on_conflict_actions::DoNothing<
+                <I as crate::upsert::OnConflictHelper>::Table,
+            >,
+        >,
+        <I as crate::upsert::OnConflictHelper>::Op,
+        <I as crate::upsert::OnConflictHelper>::Ret,
+        <I as crate::upsert::OnConflictHelper>::Schema,
+    >;
+
+    /// Represents the return type of
+    /// [`IncompleteOnConflict::do_update()`](crate::upsert::IncompleteOnConflict::do_update)
+    pub type DoUpdate<I> = crate::upsert::IncompleteDoUpdate<
+        crate::query_builder::InsertStatement<
+            <I as crate::upsert::OnConflictHelper>::Table,
+            <I as crate::upsert::OnConflictHelper>::Values,
+            <I as crate::upsert::OnConflictHelper>::Op,
+            <I as crate::upsert::OnConflictHelper>::Ret,
+            <I as crate::upsert::OnConflictHelper>::Schema,
+        >,
+        <I as crate::upsert::OnConflictHelper>::Target,
+    >;
+
+    /// Represents the return type of
+    /// [`UpdateStatement::set()`](crate::query_builder::UpdateStatement::set) and
+    /// [`IncompleteDoUpdate::set()`](crate::upsert::IncompleteDoUpdate::set)
+    pub type Set<U, V> = <U as crate::query_builder::update_statement::SetAutoTypeHelper<V>>::Out;
 
     /// Represents the return type of
     /// [`InsertStatement::returning`](crate::query_builder::InsertStatement::returning),
     /// [`UpdateStatement::returning`] and
     /// [`DeleteStatement::returning`](crate::query_builder::DeleteStatement::returning)
     pub type Returning<Q, S> =
-        <Q as crate::query_builder::returning_clause::ReturningClauseHelper<S>>::WithReturning;
+        <Q as crate::query_builder::returning::ReturningClauseHelper<S>>::WithReturning;
 
     #[doc(hidden)] // used for `QueryDsl::count`
     pub type Count<Q> = Select<Q, CountStar>;
 }
 
 pub mod prelude {
+
     //! Re-exports important traits and types. Meant to be glob imported when using Diesel.
 
     #[doc(inline)]
@@ -728,6 +832,8 @@ pub mod prelude {
     pub use crate::expression::IntoSql as _;
 
     #[doc(inline)]
+    pub use crate::expression::functions::declare_sql_function;
+    #[doc(inline)]
     pub use crate::expression::functions::define_sql_function;
     #[cfg(all(feature = "with-deprecated", not(feature = "without-deprecated")))]
     pub use crate::expression::functions::sql_function;
@@ -745,6 +851,8 @@ pub mod prelude {
     #[doc(inline)]
     pub use crate::query_builder::DecoratableTarget;
     #[doc(inline)]
+    pub use crate::query_builder::has_query::HasQuery;
+    #[doc(inline)]
     pub use crate::query_dsl::{
         BelongingToDsl, CombineDsl, JoinOnDsl, QueryDsl, RunQueryDsl, SaveChangesDsl,
     };
@@ -757,24 +865,35 @@ pub mod prelude {
         QueryResult,
     };
     #[doc(inline)]
+    pub use diesel_derives::allow_tables_to_appear_in_same_query;
+    #[doc(inline)]
     pub use diesel_derives::table_proc as table;
+    #[doc(inline)]
+    pub use diesel_derives::view_proc as view;
 
+    #[cfg(feature = "mariadb")]
+    #[doc(inline)]
+    pub use crate::mariadb::MariadbConnection;
     #[cfg(feature = "mysql")]
     #[doc(inline)]
     pub use crate::mysql::MysqlConnection;
-    #[doc(inline)]
-    #[cfg(feature = "postgres_backend")]
-    pub use crate::pg::query_builder::copy::ExecuteCopyFromDsl;
     #[cfg(feature = "postgres")]
     #[doc(inline)]
     pub use crate::pg::PgConnection;
-    #[cfg(feature = "sqlite")]
+    #[doc(inline)]
+    #[cfg(feature = "postgres_backend")]
+    pub use crate::pg::query_builder::copy::ExecuteCopyFromDsl;
+    #[cfg(feature = "__sqlite-shared")]
     #[doc(inline)]
     pub use crate::sqlite::SqliteConnection;
 }
 
 #[doc(inline)]
 pub use crate::macros::table;
+
+#[doc(inline)]
+pub use diesel_derives::allow_tables_to_appear_in_same_query;
+
 pub use crate::prelude::*;
 #[doc(inline)]
 pub use crate::query_builder::debug_query;

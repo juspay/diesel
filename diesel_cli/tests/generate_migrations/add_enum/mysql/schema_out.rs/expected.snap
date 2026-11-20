@@ -1,0 +1,51 @@
+---
+source: diesel_cli/tests/migration_generate.rs
+description: "Test: add_enum"
+---
+// @generated automatically by Diesel CLI.
+
+pub mod sql_types {
+    #[derive(Clone, diesel::query_builder::QueryId, diesel::sql_types::SqlType)]
+    #[diesel(mysql_type(name = "Enum"))]
+    #[diesel(enum_type)]
+    pub struct ResourceSomeField2Enum;
+
+    #[derive(Clone, diesel::query_builder::QueryId, diesel::sql_types::SqlType)]
+    #[diesel(mysql_type(name = "Enum"))]
+    #[diesel(enum_type)]
+    pub struct ResourceSomeFieldEnum;
+}
+
+pub mod rust_types {
+    #[derive(Clone, Copy, Debug, Eq, PartialEq, diesel::types::Enum)]
+    #[diesel(sql_type = super::sql_types::ResourceSomeField2Enum)]
+    pub enum ResourceSomeField2Enum {
+        #[diesel(rename = "FOOBAR")]
+        Foobar,
+        #[diesel(rename = "BAZBOOM")]
+        Bazboom,
+    }
+
+    #[derive(Clone, Copy, Debug, Eq, PartialEq, diesel::types::Enum)]
+    #[diesel(sql_type = super::sql_types::ResourceSomeFieldEnum)]
+    pub enum ResourceSomeFieldEnum {
+        #[diesel(rename = "a")]
+        A,
+        #[diesel(rename = "b")]
+        B,
+        #[diesel(rename = "c'c")]
+        CC,
+    }
+}
+
+diesel::table! {
+    use diesel::sql_types::*;
+    use super::sql_types::ResourceSomeFieldEnum;
+    use super::sql_types::ResourceSomeField2Enum;
+
+    resource (resource_id) {
+        resource_id -> Integer,
+        some_field -> ResourceSomeFieldEnum,
+        some_field2 -> ResourceSomeField2Enum,
+    }
+}

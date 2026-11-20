@@ -2,13 +2,14 @@ use crate::schema::*;
 use diesel::result::Error;
 use diesel::*;
 
-#[test]
+#[diesel_test_helper::test]
 #[cfg(not(feature = "sqlite"))] // FIXME: This test is only valid when operating on a file and not :memory:
 fn transaction_executes_fn_in_a_sql_transaction() {
     const TEST_NAME: &str = "transaction_executes_fn_in_a_sql_transaction";
+    let conn_ddl = &mut connection_without_transaction();
+    let _guard = setup_test_table(conn_ddl, TEST_NAME);
     let conn1 = &mut connection_without_transaction();
     let conn2 = &mut connection_without_transaction();
-    setup_test_table(conn1, TEST_NAME);
 
     fn get_count(conn: &mut TestConnection) -> i64 {
         count_test_table(conn, TEST_NAME)
@@ -18,7 +19,11 @@ fn transaction_executes_fn_in_a_sql_transaction() {
         .transaction::<_, Error, _>(|conn1| {
             assert_eq!(0, get_count(conn1));
             assert_eq!(0, get_count(conn2));
+            #[cfg(not(any(feature = "mysql", feature = "mariadb")))]
             diesel::sql_query(format!("INSERT INTO {TEST_NAME} DEFAULT VALUES")).execute(conn1)?;
+            #[cfg(any(feature = "mysql", feature = "mariadb"))]
+            diesel::sql_query(format!("INSERT INTO {TEST_NAME} VALUES (DEFAULT)"))
+                .execute(conn1)?;
             assert_eq!(1, get_count(conn1));
             assert_eq!(0, get_count(conn2));
             Ok(())
@@ -27,32 +32,33 @@ fn transaction_executes_fn_in_a_sql_transaction() {
 
     assert_eq!(1, get_count(conn1));
     assert_eq!(1, get_count(conn2));
-
-    drop_test_table(conn1, TEST_NAME);
 }
 
-#[test]
+#[diesel_test_helper::test]
 fn transaction_returns_the_returned_value() {
     let conn1 = &mut connection_without_transaction();
 
     assert_eq!(Ok(1), conn1.transaction::<_, Error, _>(|_| Ok(1)));
 }
 
-#[test]
+#[diesel_test_helper::test]
 fn transaction_is_rolled_back_when_returned_an_error() {
     let connection = &mut connection_without_transaction();
     let test_name = "transaction_is_rolled_back_when_returned_an_error";
-    setup_test_table(connection, test_name);
+    setup_temporary_test_table(connection, test_name);
 
     let _ = connection.transaction::<(), _, _>(|connection| {
+        #[cfg(not(any(feature = "mysql", feature = "mariadb")))]
         diesel::sql_query(format!("INSERT INTO {test_name} DEFAULT VALUES"))
+            .execute(connection)
+            .unwrap();
+        #[cfg(any(feature = "mysql", feature = "mariadb"))]
+        diesel::sql_query(format!("INSERT INTO {test_name} VALUES (DEFAULT)"))
             .execute(connection)
             .unwrap();
         Err(Error::RollbackTransaction)
     });
     assert_eq!(0, count_test_table(connection, test_name));
-
-    drop_test_table(connection, test_name);
 }
 
 // This test uses a SQLite3 fact to generate a rollback error,
@@ -66,12 +72,16 @@ fn transaction_is_rolled_back_when_returned_an_error() {
 // The same trick seems to work for MySQL as well based on the
 // test result, but I cannot find a document support yet. Hence
 // this test is marked for "sqlite" only as this moment. FIXME.
-#[test]
+// This test reads query results, which requires reading memory
+// allocated by the native sqlite library. Miri cannot track the
+// provenance of that memory when using `-Zmiri-native-lib`.
+#[cfg(not(miri))]
+#[diesel_test_helper::test]
 #[cfg(feature = "sqlite")]
 fn transaction_rollback_returns_error() {
     let connection = &mut connection_without_transaction();
     let test_name = "transaction_rollback_returns_error";
-    setup_test_table(connection, test_name);
+    setup_temporary_test_table(connection, test_name);
 
     // Create a transaction that will fail to rollback.
     let r = connection.transaction::<usize, _, _>(|connection| {
@@ -91,25 +101,34 @@ fn transaction_rollback_returns_error() {
     assert!(matches!(r.unwrap_err(), Error::DatabaseError(_, _)));
 
     assert_eq!(0, count_test_table(connection, test_name));
-    drop_test_table(connection, test_name);
 }
 
-#[test]
+#[diesel_test_helper::test]
 fn transactions_can_be_nested() {
     let connection = &mut connection_without_transaction();
     const TEST_NAME: &str = "transactions_can_be_nested";
-    setup_test_table(connection, TEST_NAME);
+    setup_temporary_test_table(connection, TEST_NAME);
     fn get_count(connection: &mut TestConnection) -> i64 {
         count_test_table(connection, TEST_NAME)
     }
 
     let _ = connection.transaction::<(), _, _>(|connection| {
+        #[cfg(not(any(feature = "mysql", feature = "mariadb")))]
         diesel::sql_query(format!("INSERT INTO {TEST_NAME} DEFAULT VALUES"))
+            .execute(connection)
+            .unwrap();
+        #[cfg(any(feature = "mariadb", feature = "mysql"))]
+        diesel::sql_query(format!("INSERT INTO {TEST_NAME} VALUES (DEFAULT)"))
             .execute(connection)
             .unwrap();
         assert_eq!(1, get_count(connection));
         let _ = connection.transaction::<(), _, _>(|connection| {
+            #[cfg(not(any(feature = "mariadb", feature = "mysql")))]
             diesel::sql_query(format!("INSERT INTO {TEST_NAME} DEFAULT VALUES"))
+                .execute(connection)
+                .unwrap();
+            #[cfg(any(feature = "mariadb", feature = "mysql"))]
+            diesel::sql_query(format!("INSERT INTO {TEST_NAME} VALUES (DEFAULT)"))
                 .execute(connection)
                 .unwrap();
             assert_eq!(2, get_count(connection));
@@ -117,7 +136,12 @@ fn transactions_can_be_nested() {
         });
         assert_eq!(1, get_count(connection));
         let _ = connection.transaction::<(), Error, _>(|connection| {
+            #[cfg(not(any(feature = "mariadb", feature = "mysql")))]
             diesel::sql_query(format!("INSERT INTO {TEST_NAME} DEFAULT VALUES"))
+                .execute(connection)
+                .unwrap();
+            #[cfg(any(feature = "mariadb", feature = "mysql"))]
+            diesel::sql_query(format!("INSERT INTO {TEST_NAME} VALUES (DEFAULT)"))
                 .execute(connection)
                 .unwrap();
             assert_eq!(2, get_count(connection));
@@ -127,45 +151,53 @@ fn transactions_can_be_nested() {
         Err(Error::RollbackTransaction)
     });
     assert_eq!(0, get_count(connection));
-
-    drop_test_table(connection, TEST_NAME);
 }
 
-#[test]
+#[diesel_test_helper::test]
 fn test_transaction_always_rolls_back() {
     let connection = &mut connection_without_transaction();
     let test_name = "test_transaction_always_rolls_back";
-    setup_test_table(connection, test_name);
+    setup_temporary_test_table(connection, test_name);
 
     let result = connection.test_transaction::<_, Error, _>(|connection| {
+        #[cfg(not(any(feature = "mariadb", feature = "mysql")))]
         diesel::sql_query(format!("INSERT INTO {test_name} DEFAULT VALUES")).execute(connection)?;
+        #[cfg(any(feature = "mariadb", feature = "mysql"))]
+        diesel::sql_query(format!("INSERT INTO {test_name} VALUES (DEFAULT)"))
+            .execute(connection)?;
         assert_eq!(1, count_test_table(connection, test_name));
         Ok("success")
     });
     assert_eq!(0, count_test_table(connection, test_name));
     assert_eq!("success", result);
-
-    drop_test_table(connection, test_name);
 }
 
-#[test]
+#[diesel_test_helper::test]
 #[should_panic(expected = "Transaction did not succeed")]
 fn test_transaction_panics_on_error() {
     let connection = &mut connection_without_transaction();
     connection.test_transaction::<(), _, _>(|_| Err(()));
 }
 
-fn setup_test_table(connection: &mut TestConnection, table_name: &str) {
+fn setup_temporary_test_table(connection: &mut TestConnection, table_name: &str) {
     use crate::schema_dsl::*;
-    create_table(table_name, (integer("id").primary_key().auto_increment(),))
+    create_temporary_table(table_name, (integer("id").primary_key().auto_increment(),))
         .execute(connection)
         .unwrap();
 }
 
-fn drop_test_table(connection: &mut TestConnection, table_name: &str) {
-    diesel::sql_query(format!("DROP TABLE {table_name}"))
+#[must_use]
+#[cfg(not(feature = "sqlite"))]
+fn setup_test_table<'a>(connection: &'a mut TestConnection, table_name: &'a str) -> DropTable<'a> {
+    use crate::schema_dsl::*;
+    create_table(table_name, (integer("id").primary_key().auto_increment(),))
         .execute(connection)
         .unwrap();
+    DropTable {
+        connection,
+        table_name,
+        can_drop: true,
+    }
 }
 
 fn count_test_table(connection: &mut TestConnection, table_name: &str) -> i64 {
@@ -177,12 +209,12 @@ fn count_test_table(connection: &mut TestConnection, table_name: &str) -> i64 {
     .unwrap()
 }
 
-#[test]
+#[diesel_test_helper::test]
 #[cfg(feature = "postgres")]
 fn regression_test_for_2123() {
     let conn = &mut connection_without_transaction();
     // fail once
-    let ret = conn.transaction(|conn| {
+    let _ret = conn.transaction(|conn| {
         let _ = conn.transaction(|conn| {
             // handling error
             match diesel::sql_query("SELECT foo").execute(conn) {
@@ -200,13 +232,11 @@ fn regression_test_for_2123() {
             Ok::<_, Error>(())
         })
     });
-    println!("{ret:?}");
     // other transaction
     let ret = conn
         .build_transaction()
         .serializable()
         .run(|conn| diesel::sql_query("SELECT 1").execute(conn));
     // must be Ok(1), but get Err(AlreadyInTransaction)
-    println!("{ret:?}");
     assert_eq!(Ok(1), ret);
 }

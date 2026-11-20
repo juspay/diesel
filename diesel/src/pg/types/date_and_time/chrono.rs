@@ -167,7 +167,7 @@ impl Defaultable for NaiveDate {
     }
 }
 
-const DAYS_PER_MONTH: i32 = 30;
+const DAYS_PER_MONTH: i64 = 30;
 const SECONDS_PER_DAY: i64 = 60 * 60 * 24;
 const MICROSECONDS_PER_SECOND: i64 = 1_000_000;
 
@@ -204,8 +204,9 @@ impl FromSql<Interval, Pg> for Duration {
         // use those ratios as default when explicitly converted.
         // For reference, please read `justify_interval` from this page.
         // https://www.postgresql.org/docs/current/functions-datetime.html
-        let days = interval.months * DAYS_PER_MONTH + interval.days;
-        Ok(Duration::days(days as i64) + Duration::microseconds(interval.microseconds))
+        // widened, since any `i32` month and day pair fits `i64` days and chrono
+        let days = i64::from(interval.months) * DAYS_PER_MONTH + i64::from(interval.days);
+        Ok(Duration::days(days) + Duration::microseconds(interval.microseconds))
     }
 }
 
@@ -222,7 +223,99 @@ mod tests {
     use crate::sql_types::{Date, Interval, Time, Timestamp, Timestamptz};
     use crate::test_helpers::connection;
 
-    #[test]
+    #[diesel_test_helper::test]
+    fn regression_interval_months_do_not_overflow() {
+        use crate::pg::value::PgValue;
+
+        let mut offenders = Vec::new();
+        // 71_582_788 months is where the product leaves `i32`
+        for months in [
+            0,
+            1,
+            -1,
+            71_582_787,
+            71_582_788,
+            71_582_789,
+            -71_582_789,
+            i32::MAX,
+            i32::MIN,
+        ] {
+            for days in [0, 1, -1, i32::MAX, i32::MIN] {
+                for microseconds in [0, 1, -1, i64::MAX, i64::MIN] {
+                    let mut buffer = Vec::new();
+                    buffer.extend_from_slice(&microseconds.to_be_bytes());
+                    buffer.extend_from_slice(&days.to_be_bytes());
+                    buffer.extend_from_slice(&months.to_be_bytes());
+
+                    let expected = Duration::days(i64::from(months) * 30 + i64::from(days))
+                        + Duration::microseconds(microseconds);
+                    let read = <Duration as crate::deserialize::FromSql<Interval, crate::pg::Pg>>::from_sql(
+                        PgValue::for_test(&buffer),
+                    );
+                    if read.as_ref().ok() != Some(&expected) {
+                        offenders.push(format!(
+                            "{months} months {days} days {microseconds} us read as {read:?}, not {expected:?}"
+                        ));
+                    }
+                }
+            }
+        }
+        // a deterministic xorshift over the whole three field space
+        let mut state: u64 = 0x2545F4914F6CDD1D;
+        let mut next = move || {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            state
+        };
+        for _ in 0..4096 {
+            let bytes = next().to_ne_bytes();
+            let months = i32::from_ne_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
+            let days = i32::from_ne_bytes([bytes[4], bytes[5], bytes[6], bytes[7]]);
+            let microseconds = i64::from_ne_bytes(next().to_ne_bytes());
+            let mut buffer = Vec::new();
+            buffer.extend_from_slice(&microseconds.to_be_bytes());
+            buffer.extend_from_slice(&days.to_be_bytes());
+            buffer.extend_from_slice(&months.to_be_bytes());
+
+            let expected = Duration::days(i64::from(months) * 30 + i64::from(days))
+                + Duration::microseconds(microseconds);
+            let read = <Duration as crate::deserialize::FromSql<Interval, crate::pg::Pg>>::from_sql(
+                PgValue::for_test(&buffer),
+            );
+            if read.as_ref().ok() != Some(&expected) {
+                offenders.push(format!(
+                    "{months} months {days} days {microseconds} us read as {read:?}, not {expected:?}"
+                ));
+            }
+        }
+
+        assert!(
+            offenders.is_empty(),
+            "{} intervals converted wrongly, first {:?}",
+            offenders.len(),
+            &offenders[..offenders.len().min(3)]
+        );
+    }
+
+    #[diesel_test_helper::test]
+    fn regression_interval_from_postgres_does_not_overflow() {
+        let connection = &mut connection();
+        // postgres stores each of these happily, so none is a synthetic blob
+        for (literal, months, days) in [
+            ("178956970 years 7 mons", i32::MAX, 0),
+            ("1 mon 2147483647 days", 1, i32::MAX),
+            ("-178956970 years -8 mons", i32::MIN, 0),
+        ] {
+            let read = select(sql::<Interval>(&format!("'{literal}'::interval")))
+                .get_result::<Duration>(connection)
+                .unwrap();
+            let expected = Duration::days(i64::from(months) * 30 + i64::from(days));
+            assert_eq!(read, expected, "{literal} read as {read:?}");
+        }
+    }
+
+    #[diesel_test_helper::test]
     fn unix_epoch_encodes_correctly() {
         let connection = &mut connection();
         let time = NaiveDate::from_ymd_opt(1970, 1, 1)
@@ -233,7 +326,7 @@ mod tests {
         assert!(query.get_result::<bool>(connection).unwrap());
     }
 
-    #[test]
+    #[diesel_test_helper::test]
     fn unix_epoch_encodes_correctly_with_utc_timezone() {
         let connection = &mut connection();
         let time = Utc.with_ymd_and_hms(1970, 1, 1, 0, 0, 0).single().unwrap();
@@ -241,7 +334,7 @@ mod tests {
         assert!(query.get_result::<bool>(connection).unwrap());
     }
 
-    #[test]
+    #[diesel_test_helper::test]
     fn unix_epoch_encodes_correctly_with_timezone() {
         let connection = &mut connection();
         let time = FixedOffset::west_opt(3600)
@@ -253,7 +346,7 @@ mod tests {
         assert!(query.get_result::<bool>(connection).unwrap());
     }
 
-    #[test]
+    #[diesel_test_helper::test]
     fn unix_epoch_decodes_correctly() {
         let connection = &mut connection();
         let time = NaiveDate::from_ymd_opt(1970, 1, 1)
@@ -265,7 +358,7 @@ mod tests {
         assert_eq!(Ok(time), epoch_from_sql);
     }
 
-    #[test]
+    #[diesel_test_helper::test]
     fn unix_epoch_decodes_correctly_with_timezone() {
         let connection = &mut connection();
         let time = Utc.with_ymd_and_hms(1970, 1, 1, 0, 0, 0).single().unwrap();
@@ -274,7 +367,7 @@ mod tests {
         assert_eq!(Ok(time), epoch_from_sql);
     }
 
-    #[test]
+    #[diesel_test_helper::test]
     fn times_relative_to_now_encode_correctly() {
         let connection = &mut connection();
         let time = Utc::now().naive_utc() + Duration::try_seconds(60).unwrap();
@@ -286,7 +379,7 @@ mod tests {
         assert!(query.get_result::<bool>(connection).unwrap());
     }
 
-    #[test]
+    #[diesel_test_helper::test]
     fn times_with_timezones_round_trip_after_conversion() {
         let connection = &mut connection();
         let time = FixedOffset::east_opt(3600)
@@ -301,7 +394,7 @@ mod tests {
         assert_eq!(Ok(expected), query.get_result(connection));
     }
 
-    #[test]
+    #[diesel_test_helper::test]
     fn times_of_day_encode_correctly() {
         let connection = &mut connection();
 
@@ -318,7 +411,7 @@ mod tests {
         assert!(query.get_result::<bool>(connection).unwrap());
     }
 
-    #[test]
+    #[diesel_test_helper::test]
     fn times_of_day_decode_correctly() {
         let connection = &mut connection();
         let midnight = NaiveTime::from_hms_opt(0, 0, 0).unwrap();
@@ -337,7 +430,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[diesel_test_helper::test]
     fn dates_encode_correctly() {
         let connection = &mut connection();
         let january_first_2000 = NaiveDate::from_ymd_opt(2000, 1, 1).unwrap();
@@ -365,7 +458,7 @@ mod tests {
         assert!(query.get_result::<bool>(connection).unwrap());
     }
 
-    #[test]
+    #[diesel_test_helper::test]
     fn dates_decode_correctly() {
         let connection = &mut connection();
         let january_first_2000 = NaiveDate::from_ymd_opt(2000, 1, 1).unwrap();
@@ -423,22 +516,22 @@ mod tests {
         )
     }
 
-    #[test]
+    #[diesel_test_helper::test]
     fn duration_encode_correctly() {
         let connection = &mut connection();
         let (duration, literal_strings) = get_test_duration_and_literal_strings();
         for literal in literal_strings {
-            let query = select(sql::<Interval>(&format!("'{}'::interval", literal)).eq(duration));
+            let query = select(sql::<Interval>(&format!("'{literal}'::interval")).eq(duration));
             assert!(query.get_result::<bool>(connection).unwrap());
         }
     }
 
-    #[test]
+    #[diesel_test_helper::test]
     fn duration_decode_correctly() {
         let connection = &mut connection();
         let (duration, literal_strings) = get_test_duration_and_literal_strings();
         for literal in literal_strings {
-            let query = select(sql::<Interval>(&format!("'{}'::interval", literal)));
+            let query = select(sql::<Interval>(&format!("'{literal}'::interval")));
             assert_eq!(Ok(duration), query.get_result::<Duration>(connection));
         }
     }

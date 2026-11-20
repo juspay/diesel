@@ -1,3 +1,4 @@
+#![allow(clippy::print_stdout)]
 //! Example: querying basic schemas
 //!
 //! To run this:
@@ -35,6 +36,6 @@ fn main() {
     // The `ids` are type `std::result::Result<std::vec::Vec<i32>, diesel::result::Error>`.
     let ids = ids.unwrap();
     for x in ids {
-        println!("user id:{}", x);
+        println!("user id:{x}");
     }
 }

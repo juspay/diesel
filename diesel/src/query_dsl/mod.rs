@@ -13,21 +13,24 @@
 
 use crate::backend::Backend;
 use crate::connection::Connection;
-use crate::expression::count::CountStar;
 use crate::expression::Expression;
+use crate::expression::count::CountStar;
 use crate::helper_types::*;
 use crate::query_builder::locking_clause as lock;
-use crate::query_source::{joins, Table};
+use crate::query_source::{QueryRelation, joins};
 use crate::result::QueryResult;
+use alloc::vec::Vec;
 
 mod belonging_to_dsl;
+#[doc(hidden)]
+pub mod boxed_clone_dsl;
 #[doc(hidden)]
 pub mod boxed_dsl;
 mod combine_dsl;
 mod distinct_dsl;
 #[doc(hidden)]
 pub mod filter_dsl;
-mod group_by_dsl;
+pub(crate) mod group_by_dsl;
 mod having_dsl;
 mod join_dsl;
 #[doc(hidden)]
@@ -42,10 +45,10 @@ pub(crate) mod order_dsl;
 pub mod positional_order_dsl;
 mod save_changes_dsl;
 #[doc(hidden)]
+pub mod schema_name_dsl;
+#[doc(hidden)]
 pub mod select_dsl;
 mod single_value_dsl;
-#[doc(hidden)]
-pub mod schema_name_dsl;
 
 pub use self::belonging_to_dsl::BelongingToDsl;
 pub use self::combine_dsl::CombineDsl;
@@ -63,6 +66,7 @@ pub use self::save_changes_dsl::{SaveChangesDsl, UpdateAndFetchResults};
 /// However, generic code may need to include a where clause that references
 /// these traits.
 pub mod methods {
+    pub use super::boxed_clone_dsl::BoxedCloneDsl;
     pub use super::boxed_dsl::BoxedDsl;
     pub use super::distinct_dsl::*;
     #[doc(inline)]
@@ -75,9 +79,9 @@ pub mod methods {
     pub use super::nullable_select_dsl::SelectNullableDsl;
     pub use super::offset_dsl::OffsetDsl;
     pub use super::order_dsl::{OrderDsl, ThenOrderDsl};
+    pub use super::schema_name_dsl::SchemaNameDsl;
     pub use super::select_dsl::SelectDsl;
     pub use super::single_value_dsl::SingleValueDsl;
-    pub use super::schema_name_dsl::SchemaNameDsl;
 
     #[cfg(all(feature = "with-deprecated", not(feature = "without-deprecated")))]
     #[doc(hidden)]
@@ -99,6 +103,11 @@ pub trait QueryDsl: Sized {
     /// ```rust
     /// # include!("../doctest_setup.rs");
     /// #
+    /// # // Reading the query result requires reading memory allocated by the
+    /// # // native sqlite library, which miri cannot track provenance for.
+    /// # #[cfg(miri)]
+    /// # fn main() {}
+    /// # #[cfg(not(miri))]
     /// # fn main() {
     /// #     run_test().unwrap();
     /// # }
@@ -126,6 +135,15 @@ pub trait QueryDsl: Sized {
     }
 
     /// Adds the `DISTINCT ON` clause to a query.
+    ///
+    /// Diesel performs compile time checks to verify that your `DISTINCT ON`
+    /// clause is compatible to any `ORDER BY` clause used by your query. It
+    /// requires that the first elements for both clauses are the same up to
+    /// the length of the shorter list.
+    /// By default this check allows only up to 5 columns in your `DISTINCT ON`
+    /// or `ORDER BY` clause. You can side step this limitation by wrapping
+    /// your columns same shaped tuples up to the size of 5 elements.
+    ///
     ///
     /// # Example
     ///
@@ -163,17 +181,30 @@ pub trait QueryDsl: Sized {
     ///     .execute(connection)
     ///     .unwrap();
     /// let all_animals = animals.select((species, name, legs)).load(connection);
+    ///
+    /// // requires that `distinct_on` and `order_by` both start with the
+    /// // same column
     /// let distinct_animals = animals
     ///     .select((species, name, legs))
     ///     .order_by((species, legs))
     ///     .distinct_on(species)
     ///     .load(connection);
     ///
-    /// assert_eq!(Ok(vec![Animal::new("dog", Some("Jack"), 4),
-    ///                    Animal::new("dog", None, 4),
-    ///                    Animal::new("spider", None, 8)]), all_animals);
-    /// assert_eq!(Ok(vec![Animal::new("dog", Some("Jack"), 4),
-    ///                    Animal::new("spider", None, 8)]), distinct_animals);
+    /// assert_eq!(
+    ///     Ok(vec![
+    ///         Animal::new("dog", Some("Jack"), 4),
+    ///         Animal::new("dog", None, 4),
+    ///         Animal::new("spider", None, 8)
+    ///     ]),
+    ///     all_animals
+    /// );
+    /// assert_eq!(
+    ///     Ok(vec![
+    ///         Animal::new("dog", Some("Jack"), 4),
+    ///         Animal::new("spider", None, 8)
+    ///     ]),
+    ///     distinct_animals
+    /// );
     /// # }
     /// ```
     #[cfg(feature = "postgres_backend")]
@@ -221,6 +252,11 @@ pub trait QueryDsl: Sized {
     /// # include!("../doctest_setup.rs");
     /// # use schema::users;
     /// #
+    /// # // Reading the query result requires reading memory allocated by the
+    /// # // native sqlite library, which miri cannot track provenance for.
+    /// # #[cfg(miri)]
+    /// # fn main() {}
+    /// # #[cfg(not(miri))]
     /// # fn main() {
     /// #     run_test().unwrap();
     /// # }
@@ -230,7 +266,10 @@ pub trait QueryDsl: Sized {
     /// #     let connection = &mut establish_connection();
     /// // By default, all columns will be selected
     /// let all_users = users.load::<(i32, String)>(connection)?;
-    /// assert_eq!(vec![(1, String::from("Sean")), (2, String::from("Tess"))], all_users);
+    /// assert_eq!(
+    ///     vec![(1, String::from("Sean")), (2, String::from("Tess"))],
+    ///     all_users
+    /// );
     ///
     /// let all_names = users.select(name).load::<String>(connection)?;
     /// assert_eq!(vec!["Sean", "Tess"], all_names);
@@ -276,6 +315,11 @@ pub trait QueryDsl: Sized {
     /// #     }
     /// # }
     /// #
+    /// # // Reading the query result requires reading memory allocated by the
+    /// # // native sqlite library, which miri cannot track provenance for.
+    /// # #[cfg(miri)]
+    /// # fn main() {}
+    /// # #[cfg(not(miri))]
     /// # fn main() {
     /// #     run_test().unwrap();
     /// # }
@@ -295,14 +339,18 @@ pub trait QueryDsl: Sized {
     /// // type of this query must contain all fields from the original schema in order.
     /// let all_data = join.load::<(User, Option<Post>)>(connection)?;
     /// let expected_data = vec![
-    ///     (User::new(1, "Sean"), Some(Post::new(post_id, 1, "Sean's Post"))),
+    ///     (
+    ///         User::new(1, "Sean"),
+    ///         Some(Post::new(post_id, 1, "Sean's Post")),
+    ///     ),
     ///     (User::new(2, "Tess"), None),
     /// ];
     /// assert_eq!(expected_data, all_data);
     ///
     /// // Since `posts` is on the right side of a left join, `.nullable` is
     /// // needed.
-    /// let names_and_titles = join.select((users::name, posts::title.nullable()))
+    /// let names_and_titles = join
+    ///     .select((users::name, posts::title.nullable()))
     ///     .load::<(String, Option<String>)>(connection)?;
     /// let expected_data = vec![
     ///     (String::from("Sean"), Some(String::from("Sean's Post"))),
@@ -375,7 +423,6 @@ pub trait QueryDsl: Sized {
     ///         posts
     ///         INNER JOIN comments ON comments.post_id = posts.id
     ///     ) ON posts.user_id = users.id
-    ///
     /// ```
     ///
     /// While the second query would deserialize into `(User, Post, Comment)` and
@@ -416,6 +463,11 @@ pub trait QueryDsl: Sized {
     /// allow_tables_to_appear_in_same_query!(users, posts);
     /// # */
     ///
+    /// # // Reading the query result requires reading memory allocated by the
+    /// # // native sqlite library, which miri cannot track provenance for.
+    /// # #[cfg(miri)]
+    /// # fn main() {}
+    /// # #[cfg(not(miri))]
     /// # fn main() {
     /// #     use self::users::dsl::{users, name};
     /// #     use self::posts::dsl::{posts, user_id, title};
@@ -442,7 +494,11 @@ pub trait QueryDsl: Sized {
     /// # /*
     /// allow_tables_to_appear_in_same_query!(users, posts);
     /// # */
-    ///
+    /// # // Reading the query result requires reading memory allocated by the
+    /// # // native sqlite library, which miri cannot track provenance for.
+    /// # #[cfg(miri)]
+    /// # fn main() {}
+    /// # #[cfg(not(miri))]
     /// # fn main() {
     /// #     use self::users::dsl::{users, name};
     /// #     use self::posts::dsl::{posts, user_id, title};
@@ -476,7 +532,11 @@ pub trait QueryDsl: Sized {
     /// # /*
     /// allow_tables_to_appear_in_same_query!(users, posts);
     /// # */
-    ///
+    /// # // Reading the query result requires reading memory allocated by the
+    /// # // native sqlite library, which miri cannot track provenance for.
+    /// # #[cfg(miri)]
+    /// # fn main() {}
+    /// # #[cfg(not(miri))]
     /// # fn main() {
     /// #     use self::users::dsl::{users, name};
     /// #     use self::posts::dsl::{posts, user_id, title};
@@ -511,12 +571,26 @@ pub trait QueryDsl: Sized {
     ///     .load::<(User, Post)>(connection); // type could be elided
     /// let expected_data = vec![
     ///     (
-    ///         User { id: 1, name: String::from("Sean") },
-    ///         Post { id: 4, user_id: 1, title: String::from("Sean's post") },
+    ///         User {
+    ///             id: 1,
+    ///             name: String::from("Sean"),
+    ///         },
+    ///         Post {
+    ///             id: 4,
+    ///             user_id: 1,
+    ///             title: String::from("Sean's post"),
+    ///         },
     ///     ),
     ///     (
-    ///         User { id: 1, name: String::from("Sean") },
-    ///         Post { id: 5, user_id: 2, title: String::from("Sean is a jerk") },
+    ///         User {
+    ///             id: 1,
+    ///             name: String::from("Sean"),
+    ///         },
+    ///         Post {
+    ///             id: 5,
+    ///             user_id: 2,
+    ///             title: String::from("Sean is a jerk"),
+    ///         },
     ///     ),
     /// ];
     /// assert_eq!(Ok(expected_data), data);
@@ -578,6 +652,11 @@ pub trait QueryDsl: Sized {
     /// #     }
     /// # }
     /// #
+    /// # // Reading the query result requires reading memory allocated by the
+    /// # // native sqlite library, which miri cannot track provenance for.
+    /// # #[cfg(miri)]
+    /// # fn main() {}
+    /// # #[cfg(not(miri))]
     /// # fn main() {
     /// #     run_test().unwrap();
     /// # }
@@ -594,7 +673,8 @@ pub trait QueryDsl: Sized {
     ///
     /// // Since `posts` is on the right side of a left join, `.nullable` is
     /// // needed.
-    /// let names_and_titles = join.select((users::name, posts::title.nullable()))
+    /// let names_and_titles = join
+    ///     .select((users::name, posts::title.nullable()))
     ///     .load::<(String, Option<String>)>(connection)?;
     /// let expected_data = vec![
     ///     (String::from("Sean"), Some(String::from("Sean's Post"))),
@@ -642,11 +722,9 @@ pub trait QueryDsl: Sized {
     /// # fn main() {
     /// #     use schema::users::dsl::*;
     /// #     let connection = &mut establish_connection();
-    /// let seans_id = users.filter(name.eq("Sean")).select(id)
-    ///     .first(connection);
+    /// let seans_id = users.filter(name.eq("Sean")).select(id).first(connection);
     /// assert_eq!(Ok(1), seans_id);
-    /// let tess_id = users.filter(name.eq("Tess")).select(id)
-    ///     .first(connection);
+    /// let tess_id = users.filter(name.eq("Tess")).select(id).first(connection);
     /// assert_eq!(Ok(2), tess_id);
     /// # }
     /// ```
@@ -670,6 +748,11 @@ pub trait QueryDsl: Sized {
     /// ```rust
     /// # include!("../doctest_setup.rs");
     /// #
+    /// # // Reading the query result requires reading memory allocated by the
+    /// # // native sqlite library, which miri cannot track provenance for.
+    /// # #[cfg(miri)]
+    /// # fn main() {}
+    /// # #[cfg(not(miri))]
     /// # fn main() {
     /// #     run_test().unwrap();
     /// # }
@@ -691,10 +774,7 @@ pub trait QueryDsl: Sized {
     ///     .or_filter(legs.eq(4))
     ///     .select(name)
     ///     .get_results::<Option<String>>(connection)?;
-    /// let expected = vec![
-    ///     Some(String::from("Sinatra")),
-    ///     Some(String::from("Fido")),
-    /// ];
+    /// let expected = vec![Some(String::from("Sinatra")), Some(String::from("Fido"))];
     /// assert_eq!(expected, good_animals);
     /// #     Ok(())
     /// # }
@@ -714,6 +794,11 @@ pub trait QueryDsl: Sized {
     /// ```rust
     /// # include!("../doctest_setup.rs");
     /// #
+    /// # // Reading the query result requires reading memory allocated by the
+    /// # // native sqlite library, which miri cannot track provenance for.
+    /// # #[cfg(miri)]
+    /// # fn main() {}
+    /// # #[cfg(not(miri))]
     /// # fn main() {
     /// #     use schema::users::dsl::*;
     /// #     use diesel::result::Error::NotFound;
@@ -722,7 +807,10 @@ pub trait QueryDsl: Sized {
     /// let tess = (2, "Tess".to_string());
     /// assert_eq!(Ok(sean), users.find(1).first(connection));
     /// assert_eq!(Ok(tess), users.find(2).first(connection));
-    /// assert_eq!(Err::<(i32, String), _>(NotFound), users.find(3).first(connection));
+    /// assert_eq!(
+    ///     Err::<(i32, String), _>(NotFound),
+    ///     users.find(3).first(connection)
+    /// );
     /// # }
     /// ```
     fn find<PK>(self, id: PK) -> Find<Self, PK>
@@ -745,35 +833,49 @@ pub trait QueryDsl: Sized {
     /// To construct an order clause of an unknown number of columns,
     /// see [`QueryDsl::then_order_by`](QueryDsl::then_order_by())
     ///
+    /// If you combine a `ORDER BY` clause with a [`DISTINCT ON`](QueryDsl::distinct_on())
+    /// clause you need to make sure that the columns used in both clauses are
+    /// the same up to the number of elements in the shorter of both clauses.
+    /// Diesel imposes a limit of 5 columns for this check. If you need to
+    /// have more order by expressions make sure to use `.order_by`
+    /// for the columns used by the `DISTINCT ON` clause and add additional
+    /// columns via  [`QueryDsl::then_order_by`](QueryDsl::then_order_by())
+    ///
     /// # Examples
     ///
     /// ```rust
     /// # include!("../doctest_setup.rs");
     /// #
+    /// # // Reading the query result requires reading memory allocated by the
+    /// # // native sqlite library, which miri cannot track provenance for.
+    /// # #[cfg(miri)]
+    /// # fn main() {}
+    /// # #[cfg(not(miri))]
     /// # fn main() {
     /// #     run_test();
     /// # }
     /// #
     /// # fn run_test() -> QueryResult<()> {
     /// #     use schema::users::dsl::*;
+    /// #     use schema::{comments, posts};
     /// #     let connection = &mut establish_connection();
     /// #     diesel::sql_query("DELETE FROM users").execute(connection)?;
     /// diesel::insert_into(users)
-    ///     .values(&vec![
-    ///         name.eq("Saul"),
-    ///         name.eq("Steve"),
-    ///         name.eq("Stan"),
-    ///     ])
+    ///     .values(&vec![name.eq("Saul"), name.eq("Steve"), name.eq("Stan")])
     ///     .execute(connection)?;
     ///
-    /// let ordered_names = users.select(name)
+    /// let ordered_names = users
+    ///     .select(name)
     ///     .order(name.desc())
     ///     .load::<String>(connection)?;
     /// assert_eq!(vec!["Steve", "Stan", "Saul"], ordered_names);
     ///
-    /// diesel::insert_into(users).values(name.eq("Stan")).execute(connection)?;
+    /// diesel::insert_into(users)
+    ///     .values(name.eq("Stan"))
+    ///     .execute(connection)?;
     ///
-    /// let data = users.select((name, id))
+    /// let data = users
+    ///     .select((name, id))
     ///     .order((name.asc(), id.desc()))
     ///     .load(connection)?;
     /// let expected_data = vec![
@@ -783,6 +885,23 @@ pub trait QueryDsl: Sized {
     ///     (String::from("Steve"), 4),
     /// ];
     /// assert_eq!(expected_data, data);
+    ///
+    /// # #[cfg(feature = "postgres")]
+    /// let data = users
+    ///     .inner_join(posts::table.inner_join(comments::table.on(comments::post_id.eq(posts::id))))
+    /// #    .select((name, id))
+    ///     .distinct_on(id)
+    ///     .order_by(id)
+    ///     .then_order_by((
+    ///         posts::id,
+    ///         posts::user_id,
+    ///         posts::title,
+    ///         comments::id,
+    ///         comments::body,
+    ///         comments::post_id,
+    ///     ))
+    ///     .load(connection)?;
+    /// # let _: Vec<(String, i32)> = data;
     /// #    Ok(())
     /// # }
     /// ```
@@ -810,13 +929,17 @@ pub trait QueryDsl: Sized {
     /// `.order_by(foo).order_by(bar)` is equivalent to `.order_by(bar)`.
     /// In contrast,
     /// `.order_by(foo).then_order_by(bar)` is equivalent to `.order((foo, bar))`.
-    /// This method is only present on boxed queries.
     ///
     /// # Examples
     ///
     /// ```rust
     /// # include!("../doctest_setup.rs");
     /// #
+    /// # // Reading the query result requires reading memory allocated by the
+    /// # // native sqlite library, which miri cannot track provenance for.
+    /// # #[cfg(miri)]
+    /// # fn main() {}
+    /// # #[cfg(not(miri))]
     /// # fn main() {
     /// #     run_test();
     /// # }
@@ -834,7 +957,8 @@ pub trait QueryDsl: Sized {
     ///     ])
     ///     .execute(connection)?;
     ///
-    /// let data = users.select((name, id))
+    /// let data = users
+    ///     .select((name, id))
     ///     .order_by(name.asc())
     ///     .then_order_by(id.desc())
     ///     .load(connection)?;
@@ -865,6 +989,11 @@ pub trait QueryDsl: Sized {
     /// # include!("../doctest_setup.rs");
     /// # use schema::users;
     /// #
+    /// # // Reading the query result requires reading memory allocated by the
+    /// # // native sqlite library, which miri cannot track provenance for.
+    /// # #[cfg(miri)]
+    /// # fn main() {}
+    /// # #[cfg(not(miri))]
     /// # fn main() {
     /// #     run_test().unwrap();
     /// # }
@@ -882,15 +1011,14 @@ pub trait QueryDsl: Sized {
     /// #        .execute(connection)?;
     /// #
     /// // Using a limit
-    /// let limited = users.select(name)
+    /// let limited = users
+    ///     .select(name)
     ///     .order(id)
     ///     .limit(1)
     ///     .load::<String>(connection)?;
     ///
     /// // Without a limit
-    /// let no_limit = users.select(name)
-    ///     .order(id)
-    ///     .load::<String>(connection)?;
+    /// let no_limit = users.select(name).order(id).load::<String>(connection)?;
     ///
     /// assert_eq!(vec!["Sean"], limited);
     /// assert_eq!(vec!["Sean", "Bastien", "Pascal"], no_limit);
@@ -914,6 +1042,11 @@ pub trait QueryDsl: Sized {
     /// # include!("../doctest_setup.rs");
     /// # use schema::users;
     /// #
+    /// # // Reading the query result requires reading memory allocated by the
+    /// # // native sqlite library, which miri cannot track provenance for.
+    /// # #[cfg(miri)]
+    /// # fn main() {}
+    /// # #[cfg(not(miri))]
     /// # fn main() {
     /// #     run_test().unwrap();
     /// # }
@@ -931,14 +1064,16 @@ pub trait QueryDsl: Sized {
     /// #        .execute(connection)?;
     /// #
     /// // Using an offset
-    /// let offset = users.select(name)
+    /// let offset = users
+    ///     .select(name)
     ///     .order(id)
     ///     .limit(2)
     ///     .offset(1)
     ///     .load::<String>(connection)?;
     ///
     /// // No Offset
-    /// let no_offset = users.select(name)
+    /// let no_offset = users
+    ///     .select(name)
     ///     .order(id)
     ///     .limit(2)
     ///     .load::<String>(connection)?;
@@ -981,6 +1116,11 @@ pub trait QueryDsl: Sized {
     /// # Examples
     /// ```rust
     /// # include!("../doctest_setup.rs");
+    /// # // Reading the query result requires reading memory allocated by the
+    /// # // native sqlite library, which miri cannot track provenance for.
+    /// # #[cfg(miri)]
+    /// # fn main() {}
+    /// # #[cfg(not(miri))]
     /// # fn main() {
     /// #     run_test();
     /// # }
@@ -989,13 +1129,17 @@ pub trait QueryDsl: Sized {
     /// #     use crate::schema::{users, posts};
     /// #     use diesel::dsl::count;
     /// #     let connection = &mut establish_connection();
-    /// let data = users::table.inner_join(posts::table)
+    /// let data = users::table
+    ///     .inner_join(posts::table)
     ///     .group_by(users::id)
     ///     .select((users::name, count(posts::id)))
     /// #   .order_by(users::id.asc())
     ///     .load::<(String, i64)>(connection)?;
     ///
-    /// assert_eq!(vec![(String::from("Sean"), 2), (String::from("Tess"), 1)], data);
+    /// assert_eq!(
+    ///     vec![(String::from("Sean"), 2), (String::from("Tess"), 1)],
+    ///     data
+    /// );
     /// # Ok(())
     /// # }
     /// ```
@@ -1012,6 +1156,11 @@ pub trait QueryDsl: Sized {
     /// # Examples
     /// ```rust
     /// # include!("../doctest_setup.rs");
+    /// # // Reading the query result requires reading memory allocated by the
+    /// # // native sqlite library, which miri cannot track provenance for.
+    /// # #[cfg(miri)]
+    /// # fn main() {}
+    /// # #[cfg(not(miri))]
     /// # fn main() {
     /// #     run_test();
     /// # }
@@ -1020,7 +1169,8 @@ pub trait QueryDsl: Sized {
     /// #     use crate::schema::{users, posts};
     /// #     use diesel::dsl::count;
     /// #     let connection = &mut establish_connection();
-    /// let data = users::table.inner_join(posts::table)
+    /// let data = users::table
+    ///     .inner_join(posts::table)
     ///     .group_by(users::id)
     ///     .having(count(posts::id).gt(1))
     ///     .select((users::name, count(posts::id)))
@@ -1054,7 +1204,7 @@ pub trait QueryDsl: Sized {
     /// #     run_test();
     /// # }
     /// #
-    /// # #[cfg(any(feature = "mysql", feature = "postgres"))]
+    /// # #[cfg(any(feature = "mysql", feature = "mariadb", feature = "postgres"))]
     /// # fn run_test() -> QueryResult<()> {
     /// #     use crate::schema::users;
     /// #     let connection = &mut establish_connection();
@@ -1063,7 +1213,7 @@ pub trait QueryDsl: Sized {
     /// # let u: Vec<(i32, String)> = users_for_update;
     /// # Ok(())
     /// # }
-    /// # #[cfg(feature = "sqlite")]
+    /// # #[cfg(feature = "__sqlite-shared")]
     /// # fn run_test() -> QueryResult<()> { Ok(()) }
     /// ```
     fn for_update(self) -> ForUpdate<Self>
@@ -1127,7 +1277,7 @@ pub trait QueryDsl: Sized {
     /// #     run_test();
     /// # }
     /// #
-    /// # #[cfg(any(feature = "mysql", feature = "postgres"))]
+    /// # #[cfg(any(feature = "mysql", feature = "mariadb", feature = "postgres"))]
     /// # fn run_test() -> QueryResult<()> {
     /// #     use crate::schema::users;
     /// #     let connection = &mut establish_connection();
@@ -1136,7 +1286,7 @@ pub trait QueryDsl: Sized {
     /// # let u: Vec<(i32, String)> = users_for_share;
     /// # Ok(())
     /// # }
-    /// # #[cfg(feature = "sqlite")]
+    /// # #[cfg(feature = "__sqlite-shared")]
     /// # fn run_test() -> QueryResult<()> { Ok(()) }
     /// ```
     fn for_share(self) -> ForShare<Self>
@@ -1195,7 +1345,7 @@ pub trait QueryDsl: Sized {
     /// #     run_test();
     /// # }
     /// #
-    /// # #[cfg(any(feature = "postgres", feature = "mysql"))]
+    /// # #[cfg(any(feature = "postgres", feature = "mysql", feature = "mariadb"))]
     /// # fn run_test() -> QueryResult<()> {
     /// #     use crate::schema::users;
     /// #     let connection = &mut establish_connection();
@@ -1204,7 +1354,7 @@ pub trait QueryDsl: Sized {
     /// # let u: Vec<(i32, String)> = user_skipped_locked;
     /// # Ok(())
     /// # }
-    /// # #[cfg(feature = "sqlite")]
+    /// # #[cfg(feature = "__sqlite-shared")]
     /// # fn run_test() -> QueryResult<()> { Ok(()) }
     /// ```
     fn skip_locked(self) -> SkipLocked<Self>
@@ -1226,7 +1376,7 @@ pub trait QueryDsl: Sized {
     /// #     run_test();
     /// # }
     /// #
-    /// # #[cfg(any(feature = "mysql", feature = "postgres"))]
+    /// # #[cfg(any(feature = "mysql", feature = "mariadb", feature = "postgres"))]
     /// # fn run_test() -> QueryResult<()> {
     /// #     use crate::schema::users;
     /// #     let connection = &mut establish_connection();
@@ -1235,7 +1385,7 @@ pub trait QueryDsl: Sized {
     /// # let u: Vec<(i32, String)> = users_no_wait;
     /// # Ok(())
     /// # }
-    /// # #[cfg(feature = "sqlite")]
+    /// # #[cfg(feature = "__sqlite-shared")]
     /// # fn run_test() -> QueryResult<()> { Ok(()) }
     /// ```
     fn no_wait(self) -> NoWait<Self>
@@ -1262,6 +1412,11 @@ pub trait QueryDsl: Sized {
     /// # include!("../doctest_setup.rs");
     /// # use schema::users;
     /// #
+    /// # // Reading the query result requires reading memory allocated by the
+    /// # // native sqlite library, which miri cannot track provenance for.
+    /// # #[cfg(miri)]
+    /// # fn main() {}
+    /// # #[cfg(not(miri))]
     /// # fn main() {
     /// #     use std::collections::HashMap;
     /// #     let connection = &mut establish_connection();
@@ -1297,8 +1452,14 @@ pub trait QueryDsl: Sized {
     ///     users::table.filter(users::name.eq(name)).into_boxed()
     /// }
     ///
-    /// assert_eq!(Ok(1), users_by_name("Sean").select(users::id).first(connection));
-    /// assert_eq!(Ok(2), users_by_name("Tess").select(users::id).first(connection));
+    /// assert_eq!(
+    ///     Ok(1),
+    ///     users_by_name("Sean").select(users::id).first(connection)
+    /// );
+    /// assert_eq!(
+    ///     Ok(2),
+    ///     users_by_name("Tess").select(users::id).first(connection)
+    /// );
     /// # }
     /// ```
     fn into_boxed<'a, DB>(self) -> IntoBoxed<'a, Self, DB>
@@ -1307,6 +1468,82 @@ pub trait QueryDsl: Sized {
         Self: methods::BoxedDsl<'a, DB>,
     {
         methods::BoxedDsl::internal_into_boxed(self)
+    }
+
+    /// Wraps the pieces of a query into an [`Arc`](alloc::sync::Arc).
+    ///
+    /// This is useful for cases where you want to clone and conditionally
+    /// modify a query, but need the type to remain the same. The backend
+    /// must be specified as part of this. It is not possible to box a query
+    /// and have it be useable on multiple backends.
+    ///
+    /// A cloneable boxed query will incur a slightly greater performance penalty
+    /// than a standard boxed query. In both cases, the query builder can no longer
+    /// be inlined by the compiler. For most applications this cost will be minimal.
+    ///
+    /// ### Example
+    ///
+    /// ```rust
+    /// # include!("../doctest_setup.rs");
+    /// # use schema::users;
+    /// #
+    /// # // Reading the query result requires reading memory allocated by the
+    /// # // native sqlite library, which miri cannot track provenance for.
+    /// # #[cfg(miri)]
+    /// # fn main() {}
+    /// # #[cfg(not(miri))]
+    /// # fn main() {
+    /// #     use std::collections::HashMap;
+    /// #     let connection = &mut establish_connection();
+    /// #     let mut params = HashMap::new();
+    /// #     params.insert("name", "Sean");
+    /// let query = users::table.into_boxed_clone();
+    /// let mut query = query.clone();
+    /// if let Some(name) = params.get("name") {
+    ///     query = query.filter(users::name.eq(name));
+    /// }
+    /// let users = query.load(connection);
+    /// #     let expected = vec![(1, String::from("Sean"))];
+    /// #     assert_eq!(Ok(expected), users);
+    /// # }
+    /// ```
+    ///
+    /// Diesel queries also have a similar problem to [`Iterator`], where
+    /// returning them from a function requires exposing the implementation of that
+    /// function. The [`helper_types`][helper_types] module exists to help with this,
+    /// but you might want to hide the return type or have it conditionally change.
+    /// Boxing can achieve both.
+    ///
+    /// [helper_types]: crate::helper_types
+    ///
+    /// ### Example
+    ///
+    /// ```rust
+    /// # include!("../doctest_setup.rs");
+    /// # use schema::users;
+    /// #
+    /// # fn main() {
+    /// #     let connection = &mut establish_connection();
+    /// fn users_by_name(name: &str) -> users::BoxedCloneQuery<DB> {
+    ///     users::table.filter(users::name.eq(name)).into_boxed_clone()
+    /// }
+    ///
+    /// assert_eq!(
+    ///     Ok(1),
+    ///     users_by_name("Sean").clone().select(users::id).first(connection)
+    /// );
+    /// assert_eq!(
+    ///     Ok(2),
+    ///     users_by_name("Tess").clone().select(users::id).first(connection)
+    /// );
+    /// # }
+    /// ```
+    fn into_boxed_clone<'a, DB>(self) -> IntoBoxedClone<'a, Self, DB>
+    where
+        DB: Backend,
+        Self: methods::BoxedCloneDsl<'a, DB>,
+    {
+        methods::BoxedCloneDsl::internal_into_boxed_clone(self)
     }
 
     /// Wraps this select statement in parenthesis, allowing it to be used
@@ -1325,6 +1562,11 @@ pub trait QueryDsl: Sized {
     /// ```rust
     /// # include!("../doctest_setup.rs");
     /// #
+    /// # // Reading the query result requires reading memory allocated by the
+    /// # // native sqlite library, which miri cannot track provenance for.
+    /// # #[cfg(miri)]
+    /// # fn main() {}
+    /// # #[cfg(not(miri))]
     /// # fn main() {
     /// #     run_test();
     /// # }
@@ -1337,10 +1579,13 @@ pub trait QueryDsl: Sized {
     /// insert_into(posts::table)
     ///     .values(posts::user_id.eq(1))
     ///     .execute(connection)?;
-    /// let last_post = posts::table
-    ///     .order(posts::id.desc());
-    /// let most_recently_active_user = users.select(name)
-    ///     .filter(id.nullable().eq(last_post.select(posts::user_id).single_value()))
+    /// let last_post = posts::table.order(posts::id.desc());
+    /// let most_recently_active_user = users
+    ///     .select(name)
+    ///     .filter(
+    ///         id.nullable()
+    ///             .eq(last_post.select(posts::user_id).single_value()),
+    ///     )
     ///     .first::<String>(connection)?;
     /// assert_eq!("Sean", most_recently_active_user);
     /// #     Ok(())
@@ -1360,6 +1605,11 @@ pub trait QueryDsl: Sized {
     /// ```rust
     /// # include!("../doctest_setup.rs");
     /// #
+    /// # // Reading the query result requires reading memory allocated by the
+    /// # // native sqlite library, which miri cannot track provenance for.
+    /// # #[cfg(miri)]
+    /// # fn main() {}
+    /// # #[cfg(not(miri))]
     /// # fn main() {
     /// #    run_test();
     /// # }
@@ -1395,7 +1645,10 @@ pub trait QueryDsl: Sized {
         methods::SelectNullableDsl::nullable(self)
     }
 
-    fn schema_name(self, schema_name: &String) -> SchameName<Self>
+    /// Sets the schema name used to qualify this query's table.
+    ///
+    /// The schema name is rendered as a quoted SQL identifier.
+    fn schema_name(self, schema_name: &str) -> SchameName<Self>
     where
         Self: methods::SchemaNameDsl,
     {
@@ -1403,7 +1656,8 @@ pub trait QueryDsl: Sized {
     }
 }
 
-impl<T: Table> QueryDsl for T {}
+#[diagnostic::do_not_recommend]
+impl<T: QueryRelation> QueryDsl for T {}
 
 /// Methods used to execute queries.
 pub trait RunQueryDsl<Conn>: Sized {
@@ -1485,6 +1739,11 @@ pub trait RunQueryDsl<Conn>: Sized {
     /// ```rust
     /// # include!("../doctest_setup.rs");
     /// #
+    /// # // Reading the query result requires reading memory allocated by the
+    /// # // native sqlite library, which miri cannot track provenance for.
+    /// # #[cfg(miri)]
+    /// # fn main() {}
+    /// # #[cfg(not(miri))]
     /// # fn main() {
     /// #     run_test();
     /// # }
@@ -1493,8 +1752,7 @@ pub trait RunQueryDsl<Conn>: Sized {
     /// #     use diesel::insert_into;
     /// #     use schema::users::dsl::*;
     /// #     let connection = &mut establish_connection();
-    /// let data = users.select(name)
-    ///     .load::<String>(connection)?;
+    /// let data = users.select(name).load::<String>(connection)?;
     /// assert_eq!(vec!["Sean", "Tess"], data);
     /// #     Ok(())
     /// # }
@@ -1505,6 +1763,11 @@ pub trait RunQueryDsl<Conn>: Sized {
     /// ```rust
     /// # include!("../doctest_setup.rs");
     /// #
+    /// # // Reading the query result requires reading memory allocated by the
+    /// # // native sqlite library, which miri cannot track provenance for.
+    /// # #[cfg(miri)]
+    /// # fn main() {}
+    /// # #[cfg(not(miri))]
     /// # fn main() {
     /// #     run_test();
     /// # }
@@ -1513,12 +1776,8 @@ pub trait RunQueryDsl<Conn>: Sized {
     /// #     use diesel::insert_into;
     /// #     use schema::users::dsl::*;
     /// #     let connection = &mut establish_connection();
-    /// let data = users
-    ///     .load::<(i32, String)>(connection)?;
-    /// let expected_data = vec![
-    ///     (1, String::from("Sean")),
-    ///     (2, String::from("Tess")),
-    /// ];
+    /// let data = users.load::<(i32, String)>(connection)?;
+    /// let expected_data = vec![(1, String::from("Sean")), (2, String::from("Tess"))];
     /// assert_eq!(expected_data, data);
     /// #     Ok(())
     /// # }
@@ -1535,6 +1794,11 @@ pub trait RunQueryDsl<Conn>: Sized {
     ///     name: String,
     /// }
     ///
+    /// # // Reading the query result requires reading memory allocated by the
+    /// # // native sqlite library, which miri cannot track provenance for.
+    /// # #[cfg(miri)]
+    /// # fn main() {}
+    /// # #[cfg(not(miri))]
     /// # fn main() {
     /// #     run_test();
     /// # }
@@ -1543,11 +1807,16 @@ pub trait RunQueryDsl<Conn>: Sized {
     /// #     use diesel::insert_into;
     /// #     use schema::users::dsl::*;
     /// #     let connection = &mut establish_connection();
-    /// let data = users
-    ///     .load::<User>(connection)?;
+    /// let data = users.load::<User>(connection)?;
     /// let expected_data = vec![
-    ///     User { id: 1, name: String::from("Sean") },
-    ///     User { id: 2, name: String::from("Tess") },
+    ///     User {
+    ///         id: 1,
+    ///         name: String::from("Sean"),
+    ///     },
+    ///     User {
+    ///         id: 2,
+    ///         name: String::from("Tess"),
+    ///     },
     /// ];
     /// assert_eq!(expected_data, data);
     /// #     Ok(())
@@ -1600,6 +1869,11 @@ pub trait RunQueryDsl<Conn>: Sized {
     /// ```rust
     /// # include!("../doctest_setup.rs");
     /// #
+    /// # // Reading the query result requires reading memory allocated by the
+    /// # // native sqlite library, which miri cannot track provenance for.
+    /// # #[cfg(miri)]
+    /// # fn main() {}
+    /// # #[cfg(not(miri))]
     /// # fn main() {
     /// #     run_test();
     /// # }
@@ -1610,7 +1884,8 @@ pub trait RunQueryDsl<Conn>: Sized {
     /// #     let connection = &mut establish_connection();
     /// use diesel::connection::DefaultLoadingMode;
     ///
-    /// let data = users.select(name)
+    /// let data = users
+    ///     .select(name)
     ///     .load_iter::<String, DefaultLoadingMode>(connection)?
     ///     .collect::<QueryResult<Vec<_>>>()?;
     /// assert_eq!(vec!["Sean", "Tess"], data);
@@ -1623,6 +1898,11 @@ pub trait RunQueryDsl<Conn>: Sized {
     /// ```rust
     /// # include!("../doctest_setup.rs");
     /// #
+    /// # // Reading the query result requires reading memory allocated by the
+    /// # // native sqlite library, which miri cannot track provenance for.
+    /// # #[cfg(miri)]
+    /// # fn main() {}
+    /// # #[cfg(not(miri))]
     /// # fn main() {
     /// #     run_test();
     /// # }
@@ -1636,10 +1916,7 @@ pub trait RunQueryDsl<Conn>: Sized {
     /// let data = users
     ///     .load_iter::<(i32, String), DefaultLoadingMode>(connection)?
     ///     .collect::<QueryResult<Vec<_>>>()?;
-    /// let expected_data = vec![
-    ///     (1, String::from("Sean")),
-    ///     (2, String::from("Tess")),
-    /// ];
+    /// let expected_data = vec![(1, String::from("Sean")), (2, String::from("Tess"))];
     /// assert_eq!(expected_data, data);
     /// #     Ok(())
     /// # }
@@ -1656,6 +1933,11 @@ pub trait RunQueryDsl<Conn>: Sized {
     ///     name: String,
     /// }
     ///
+    /// # // Reading the query result requires reading memory allocated by the
+    /// # // native sqlite library, which miri cannot track provenance for.
+    /// # #[cfg(miri)]
+    /// # fn main() {}
+    /// # #[cfg(not(miri))]
     /// # fn main() {
     /// #     run_test();
     /// # }
@@ -1670,8 +1952,14 @@ pub trait RunQueryDsl<Conn>: Sized {
     ///     .load_iter::<User, DefaultLoadingMode>(connection)?
     ///     .collect::<QueryResult<Vec<_>>>()?;
     /// let expected_data = vec![
-    ///     User { id: 1, name: String::from("Sean") },
-    ///     User { id: 2, name: String::from("Tess") },
+    ///     User {
+    ///         id: 1,
+    ///         name: String::from("Sean"),
+    ///     },
+    ///     User {
+    ///         id: 2,
+    ///         name: String::from("Tess"),
+    ///     },
     /// ];
     /// assert_eq!(expected_data, data);
     /// #     Ok(())
@@ -1768,6 +2056,11 @@ pub trait RunQueryDsl<Conn>: Sized {
     ///
     /// ```rust
     /// # include!("../doctest_setup.rs");
+    /// # // Reading the query result requires reading memory allocated by the
+    /// # // native sqlite library, which miri cannot track provenance for.
+    /// # #[cfg(miri)]
+    /// # fn main() {}
+    /// # #[cfg(not(miri))]
     /// # fn main() {
     /// #     run_test();
     /// # }
@@ -1798,10 +2091,16 @@ pub trait RunQueryDsl<Conn>: Sized {
     }
 }
 
-// Note: We could have a blanket `AsQuery` impl here, which would apply to
-// everything we want it to. However, when a query is invalid, we specifically
+/// Marker trait for notating what types should implement RunQueryDsl
+/// Primarily used to simplify diesel_async implementing the async version of RunQueryDsl
+pub trait RunQueryDslSupport {}
+
+impl<T> RunQueryDslSupport for T where T: QueryRelation {}
+
+// We can now use a blanket implementation against RunQueryDslSupport which
+// preserves the exiting functionality where we specifically
 // want the error to happen on the where clause of the method instead of trait
 // resolution. Otherwise our users will get an error saying `<3 page long type>:
 // ExecuteDsl is not satisfied` instead of a specific error telling them what
 // part of their query is wrong.
-impl<T, Conn> RunQueryDsl<Conn> for T where T: Table {}
+impl<T, Conn> RunQueryDsl<Conn> for T where T: RunQueryDslSupport {}

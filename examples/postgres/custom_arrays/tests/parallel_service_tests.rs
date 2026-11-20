@@ -1,8 +1,9 @@
+#![allow(clippy::print_stdout, reason = "Example code")]
+use custom_arrays::Connection;
 use custom_arrays::model::endpoint_type::Endpoint;
 use custom_arrays::model::protocol_type::ProtocolType;
 use custom_arrays::model::service;
 use custom_arrays::model::service::{CreateService, UpdateService};
-use custom_arrays::Connection;
 use diesel::{Connection as DieselConnection, PgConnection};
 use dotenvy::dotenv;
 use std::env;
@@ -22,7 +23,7 @@ fn postgres_connection() -> PgConnection {
         .expect("PG_DATABASE_URL must be set");
 
     let mut conn = PgConnection::establish(&database_url)
-        .unwrap_or_else(|_| panic!("Error connecting to {}", database_url));
+        .unwrap_or_else(|e| panic!("Failed to connect, error: {e}"));
     conn.begin_test_transaction()
         .expect("Failed to begin test transaction");
     run_db_migration(&mut conn);

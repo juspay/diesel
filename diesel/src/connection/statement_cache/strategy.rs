@@ -1,14 +1,35 @@
-use std::collections::hash_map::Entry;
-use std::collections::HashMap;
-use std::hash::Hash;
+use crate::backend::Backend;
+use crate::util::std_compat::Entry;
+use crate::util::std_compat::HashMap;
+use core::hash::Hash;
 
-use crate::{backend::Backend, result::Error};
+use super::{CacheSize, StatementCacheKey};
 
-use super::{CacheSize, MaybeCached, QueryFragmentForCachedStatement, StatementCacheKey};
+/// Indicates the cache key status
+//
+// This is a separate enum and not just `Option<Entry>`
+// as we need to return the cache key for owner ship reasons
+// if we don't have a cache at all
+#[cfg_attr(
+    feature = "i-implement-a-third-party-backend-and-opt-into-breaking-changes",
+    allow(missing_debug_implementations)
+)]
+// cannot implement debug easily as StatementCacheKey is not Debug
+pub enum LookupStatementResult<'a, DB, Statement>
+where
+    DB: Backend,
+{
+    /// The cache entry, either already populated or vacant
+    /// in the later case the caller needs to prepare the
+    /// statement and insert it into the cache
+    CacheEntry(Entry<'a, StatementCacheKey<DB>, Statement>),
+    /// This key should not be cached
+    NoCache(StatementCacheKey<DB>),
+}
 
 /// Implement this trait, in order to control statement caching.
 #[allow(unreachable_pub)]
-pub trait StatementCacheStrategy<DB, Statement>
+pub trait StatementCacheStrategy<DB, Statement>: Send + 'static
 where
     DB: Backend,
     StatementCacheKey<DB>: Hash + Eq,
@@ -16,18 +37,18 @@ where
     /// Returns which prepared statement cache size is implemented by this trait
     fn cache_size(&self) -> CacheSize;
 
-    /// Every query (which is safe to cache) will go through this function
-    /// The implementation will decide whether to cache statement or not
-    /// * `prepare_fn` - will be invoked if prepared statement wasn't cached already
-    ///   * first argument is sql query string
-    ///   * second argument specifies whether statement will be cached (true) or not (false).
-    fn get(
+    /// Returns whether or not the corresponding cache key is already cached
+    fn lookup_statement(
         &mut self,
         key: StatementCacheKey<DB>,
-        backend: &DB,
-        source: &dyn QueryFragmentForCachedStatement<DB>,
-        prepare_fn: &mut dyn FnMut(&str, bool) -> Result<Statement, Error>,
-    ) -> Result<MaybeCached<'_, Statement>, Error>;
+    ) -> LookupStatementResult<'_, DB, Statement>;
+
+    /// Removes all cached statements so that subsequent queries are re-prepared.
+    // Only reached through `StatementCache::clear`, which is currently used only
+    // by the SQLite authorizer, so it is dead code for backends compiled without
+    // that caller.
+    #[cfg(feature = "__sqlite-shared")]
+    fn clear(&mut self);
 }
 
 /// Cache all (safe) statements for as long as connection is alive.
@@ -52,31 +73,26 @@ where
 
 impl<DB, Statement> StatementCacheStrategy<DB, Statement> for WithCacheStrategy<DB, Statement>
 where
-    DB: Backend,
+    DB: Backend + 'static,
     StatementCacheKey<DB>: Hash + Eq,
-    DB::TypeMetadata: Clone,
+    DB::TypeMetadata: Send + Clone,
     DB::QueryBuilder: Default,
+    Statement: Send + 'static,
 {
-    fn get(
+    fn lookup_statement(
         &mut self,
-        key: StatementCacheKey<DB>,
-        backend: &DB,
-        source: &dyn QueryFragmentForCachedStatement<DB>,
-        prepare_fn: &mut dyn FnMut(&str, bool) -> Result<Statement, Error>,
-    ) -> Result<MaybeCached<'_, Statement>, Error> {
-        let entry = self.cache.entry(key);
-        match entry {
-            Entry::Occupied(e) => Ok(MaybeCached::Cached(e.into_mut())),
-            Entry::Vacant(e) => {
-                let sql = e.key().sql(source, backend)?;
-                let st = prepare_fn(&sql, true)?;
-                Ok(MaybeCached::Cached(e.insert(st)))
-            }
-        }
+        entry: StatementCacheKey<DB>,
+    ) -> LookupStatementResult<'_, DB, Statement> {
+        LookupStatementResult::CacheEntry(self.cache.entry(entry))
     }
 
     fn cache_size(&self) -> CacheSize {
         CacheSize::Unbounded
+    }
+
+    #[cfg(feature = "__sqlite-shared")]
+    fn clear(&mut self) {
+        self.cache.clear();
     }
 }
 
@@ -91,21 +107,21 @@ where
     StatementCacheKey<DB>: Hash + Eq,
     DB::TypeMetadata: Clone,
     DB::QueryBuilder: Default,
+    Statement: 'static,
 {
-    fn get(
+    fn lookup_statement(
         &mut self,
-        key: StatementCacheKey<DB>,
-        backend: &DB,
-        source: &dyn QueryFragmentForCachedStatement<DB>,
-        prepare_fn: &mut dyn FnMut(&str, bool) -> Result<Statement, Error>,
-    ) -> Result<MaybeCached<'_, Statement>, Error> {
-        let sql = key.sql(source, backend)?;
-        Ok(MaybeCached::CannotCache(prepare_fn(&sql, false)?))
+        entry: StatementCacheKey<DB>,
+    ) -> LookupStatementResult<'_, DB, Statement> {
+        LookupStatementResult::NoCache(entry)
     }
 
     fn cache_size(&self) -> CacheSize {
         CacheSize::Disabled
     }
+
+    #[cfg(feature = "__sqlite-shared")]
+    fn clear(&mut self) {}
 }
 
 #[allow(dead_code)]
@@ -113,8 +129,8 @@ where
 mod testing_utils {
 
     use crate::{
-        connection::{Instrumentation, InstrumentationEvent},
         Connection,
+        connection::{Instrumentation, InstrumentationEvent},
     };
 
     #[derive(Default)]
@@ -148,7 +164,6 @@ mod testing_utils {
 mod tests_pg {
     use crate::connection::CacheSize;
     use crate::dsl::sql;
-    use crate::expression::functions::define_sql_function;
     use crate::insertable::Insertable;
     use crate::pg::Pg;
     use crate::sql_types::{Integer, VarChar};
@@ -156,7 +171,12 @@ mod tests_pg {
     use crate::test_helpers::pg_database_url;
     use crate::{Connection, ExpressionMethods, IntoSql, PgConnection, QueryDsl, RunQueryDsl};
 
-    use super::testing_utils::{count_cache_calls, RecordCacheEvents};
+    use super::testing_utils::{RecordCacheEvents, count_cache_calls};
+
+    #[crate::declare_sql_function]
+    extern "SQL" {
+        fn lower(x: VarChar) -> VarChar;
+    }
 
     table! {
         users {
@@ -171,7 +191,7 @@ mod tests_pg {
         conn
     }
 
-    #[test]
+    #[diesel_test_helper::test]
     fn prepared_statements_are_cached() {
         let connection = &mut connection();
 
@@ -183,7 +203,7 @@ mod tests_pg {
         assert_eq!(1, count_cache_calls(connection));
     }
 
-    #[test]
+    #[diesel_test_helper::test]
     fn queries_with_identical_sql_but_different_types_are_cached_separately() {
         let connection = &mut connection();
 
@@ -196,7 +216,7 @@ mod tests_pg {
         assert_eq!(2, count_cache_calls(connection));
     }
 
-    #[test]
+    #[diesel_test_helper::test]
     fn queries_with_identical_types_and_sql_but_different_bind_types_are_cached_separately() {
         let connection = &mut connection();
 
@@ -209,9 +229,7 @@ mod tests_pg {
         assert_eq!(2, count_cache_calls(connection));
     }
 
-    define_sql_function!(fn lower(x: VarChar) -> VarChar);
-
-    #[test]
+    #[diesel_test_helper::test]
     fn queries_with_identical_types_and_binds_but_different_sql_are_cached_separately() {
         let connection = &mut connection();
 
@@ -225,7 +243,7 @@ mod tests_pg {
         assert_eq!(2, count_cache_calls(connection));
     }
 
-    #[test]
+    #[diesel_test_helper::test]
     fn queries_with_sql_literal_nodes_are_not_cached() {
         let connection = &mut connection();
         let query = crate::select(sql::<Integer>("1"));
@@ -234,7 +252,7 @@ mod tests_pg {
         assert_eq!(0, count_cache_calls(connection));
     }
 
-    #[test]
+    #[diesel_test_helper::test]
     fn inserts_from_select_are_cached() {
         let connection = &mut connection();
         connection.begin_test_transaction().unwrap();
@@ -260,7 +278,7 @@ mod tests_pg {
         assert_eq!(2, count_cache_calls(connection));
     }
 
-    #[test]
+    #[diesel_test_helper::test]
     fn single_inserts_are_cached() {
         let connection = &mut connection();
         connection.begin_test_transaction().unwrap();
@@ -278,7 +296,7 @@ mod tests_pg {
         assert_eq!(1, count_cache_calls(connection));
     }
 
-    #[test]
+    #[diesel_test_helper::test]
     fn dynamic_batch_inserts_are_not_cached() {
         let connection = &mut connection();
         connection.begin_test_transaction().unwrap();
@@ -296,7 +314,7 @@ mod tests_pg {
         assert_eq!(0, count_cache_calls(connection));
     }
 
-    #[test]
+    #[diesel_test_helper::test]
     fn static_batch_inserts_are_cached() {
         let connection = &mut connection();
         connection.begin_test_transaction().unwrap();
@@ -314,7 +332,7 @@ mod tests_pg {
         assert_eq!(1, count_cache_calls(connection));
     }
 
-    #[test]
+    #[diesel_test_helper::test]
     fn queries_containing_in_with_vec_are_cached() {
         let connection = &mut connection();
         let one_as_expr = 1.into_sql::<Integer>();
@@ -324,7 +342,7 @@ mod tests_pg {
         assert_eq!(1, count_cache_calls(connection));
     }
 
-    #[test]
+    #[diesel_test_helper::test]
     fn disabling_the_cache_works() {
         let connection = &mut connection();
         connection.set_prepared_statement_cache_size(CacheSize::Disabled);
@@ -339,7 +357,7 @@ mod tests_pg {
 }
 
 #[cfg(test)]
-#[cfg(feature = "sqlite")]
+#[cfg(feature = "__sqlite-shared")]
 mod tests_sqlite {
 
     use crate::connection::CacheSize;
@@ -348,7 +366,7 @@ mod tests_sqlite {
     use crate::sql_types::Integer;
     use crate::{Connection, ExpressionMethods, IntoSql, SqliteConnection};
 
-    use super::testing_utils::{count_cache_calls, RecordCacheEvents};
+    use super::testing_utils::{RecordCacheEvents, count_cache_calls};
 
     pub fn connection() -> SqliteConnection {
         let mut conn = SqliteConnection::establish(":memory:").unwrap();
@@ -356,7 +374,7 @@ mod tests_sqlite {
         conn
     }
 
-    #[test]
+    #[diesel_test_helper::test]
     fn prepared_statements_are_cached_when_run() {
         let connection = &mut connection();
         let query = crate::select(1.into_sql::<Integer>());
@@ -367,7 +385,7 @@ mod tests_sqlite {
         assert_eq!(1, count_cache_calls(connection));
     }
 
-    #[test]
+    #[diesel_test_helper::test]
     fn sql_literal_nodes_are_not_cached() {
         let connection = &mut connection();
         let query = crate::select(sql::<Integer>("1"));
@@ -376,7 +394,7 @@ mod tests_sqlite {
         assert_eq!(0, count_cache_calls(connection));
     }
 
-    #[test]
+    #[diesel_test_helper::test]
     fn queries_containing_sql_literal_nodes_are_not_cached() {
         let connection = &mut connection();
         let one_as_expr = 1.into_sql::<Integer>();
@@ -386,7 +404,7 @@ mod tests_sqlite {
         assert_eq!(0, count_cache_calls(connection));
     }
 
-    #[test]
+    #[diesel_test_helper::test]
     fn queries_containing_in_with_vec_are_not_cached() {
         let connection = &mut connection();
         let one_as_expr = 1.into_sql::<Integer>();
@@ -396,7 +414,7 @@ mod tests_sqlite {
         assert_eq!(0, count_cache_calls(connection));
     }
 
-    #[test]
+    #[diesel_test_helper::test]
     fn queries_containing_in_with_subselect_are_cached() {
         let connection = &mut connection();
         let one_as_expr = 1.into_sql::<Integer>();
@@ -406,7 +424,7 @@ mod tests_sqlite {
         assert_eq!(1, count_cache_calls(connection));
     }
 
-    #[test]
+    #[diesel_test_helper::test]
     fn disabling_the_cache_works() {
         let connection = &mut connection();
         connection.set_prepared_statement_cache_size(CacheSize::Disabled);

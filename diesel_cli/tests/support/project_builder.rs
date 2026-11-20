@@ -3,8 +3,8 @@ extern crate dotenvy;
 #[cfg(not(feature = "sqlite"))]
 extern crate url;
 
-use std::fs::{self, File};
-use std::io::prelude::*;
+use std::fs::{self, File, ReadDir};
+use std::io::{self, prelude::*};
 use std::path::{Path, PathBuf};
 use tempfile::{Builder, TempDir};
 
@@ -85,8 +85,13 @@ impl Project {
             .join("migrations")
             .read_dir()
             .expect("Error reading directory")
-            .map(|e| Migration {
-                path: e.expect("error reading entry").path(),
+            .filter_map(|e| {
+                if let Ok(e) = e
+                    && e.path().is_dir()
+                {
+                    return Some(Migration { path: e.path() });
+                }
+                None
             })
             .collect()
     }
@@ -96,7 +101,7 @@ impl Project {
         fs::remove_file(file).unwrap();
     }
 
-    #[cfg(any(feature = "postgres", feature = "mysql"))]
+    #[cfg(any(feature = "postgres", feature = "mysql", feature = "mariadb"))]
     fn database_url_from_env(&self, var: &str) -> url::Url {
         use self::dotenvy::dotenv;
         use std::env;
@@ -104,7 +109,7 @@ impl Project {
 
         let var_os = env::var(var).or_else(|_| env::var("DATABASE_URL")).unwrap();
         let mut db_url = url::Url::parse(&var_os).unwrap();
-        db_url.set_path(&format!("/diesel_{}", &self.name));
+        db_url.set_path(&format!("/diesel_{}", self.name));
         db_url
     }
 
@@ -116,6 +121,12 @@ impl Project {
     #[cfg(feature = "mysql")]
     pub fn database_url(&self) -> String {
         self.database_url_from_env("MYSQL_DATABASE_URL").to_string()
+    }
+
+    #[cfg(feature = "mariadb")]
+    pub fn database_url(&self) -> String {
+        self.database_url_from_env("MARIADB_DATABASE_URL")
+            .to_string()
     }
 
     #[cfg(feature = "sqlite")]
@@ -130,6 +141,10 @@ impl Project {
 
     pub fn has_file<P: AsRef<Path>>(&self, path: P) -> bool {
         self.directory.path().join(path).exists()
+    }
+
+    pub fn directory_entries<P: AsRef<Path>>(&self, path: P) -> Result<ReadDir, io::Error> {
+        fs::read_dir(self.directory.path().join(path))
     }
 
     pub fn file_contents<P: AsRef<Path>>(&self, path: P) -> String {
@@ -181,6 +196,10 @@ impl Project {
 
     pub fn skip_drop_db(&mut self) {
         self.skip_drop_db = true;
+    }
+
+    pub fn directory_path(&self) -> &Path {
+        self.directory.path()
     }
 }
 

@@ -6,11 +6,12 @@ use std::str::FromStr;
 use super::data_structures::ColumnDefinition;
 use super::inference;
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct TableName {
     pub sql_name: String,
     pub rust_name: String,
     pub schema: Option<String>,
+    pub rust_schema: Option<String>,
 }
 
 impl TableName {
@@ -18,9 +19,14 @@ impl TableName {
         let name = name.into();
 
         TableName {
-            rust_name: inference::rust_name_for_sql_name(&name),
+            rust_name: inference::rust_name_for_sql_name(
+                &name,
+                inference::IdentifierKind::Table,
+                None,
+            ),
             sql_name: name,
             schema: None,
+            rust_schema: None,
         }
     }
 
@@ -30,11 +36,20 @@ impl TableName {
         U: Into<String>,
     {
         let name = name.into();
-
+        let schema = schema.into();
         TableName {
-            rust_name: inference::rust_name_for_sql_name(&name),
+            rust_name: inference::rust_name_for_sql_name(
+                &name,
+                inference::IdentifierKind::Table,
+                None,
+            ),
             sql_name: name,
-            schema: Some(schema.into()),
+            rust_schema: Some(inference::rust_name_for_sql_name(
+                &schema,
+                inference::IdentifierKind::Schema,
+                None,
+            )),
+            schema: Some(schema),
         }
     }
 
@@ -42,6 +57,7 @@ impl TableName {
     pub fn strip_schema_if_matches(&mut self, schema: &str) {
         if self.schema.as_deref() == Some(schema) {
             self.schema = None;
+            self.rust_schema = None;
         }
     }
 
@@ -67,7 +83,7 @@ where
 
 impl fmt::Display for TableName {
     fn fmt(&self, out: &mut fmt::Formatter) -> Result<(), fmt::Error> {
-        match self.schema {
+        match self.rust_schema {
             Some(ref schema_name) => write!(out, "{}.{}", schema_name, self.rust_name),
             None => write!(out, "{}", self.rust_name),
         }
@@ -90,7 +106,7 @@ impl FromStr for TableName {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct TableData {
     pub name: TableName,
     pub primary_key: Vec<String>,
@@ -98,11 +114,20 @@ pub struct TableData {
     pub comment: Option<String>,
 }
 
+#[derive(Debug, Clone)]
+pub struct ViewData {
+    pub name: TableName,
+    pub column_data: Vec<ColumnDefinition>,
+    pub comment: Option<String>,
+    #[expect(dead_code, reason = "Will be used later")]
+    pub sql_definition: String,
+}
+
 mod serde_impls {
     extern crate serde;
 
     use self::serde::de::Visitor;
-    use self::serde::{de, Deserialize, Deserializer};
+    use self::serde::{Deserialize, Deserializer, de};
     use super::TableName;
     use std::fmt;
 

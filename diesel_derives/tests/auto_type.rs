@@ -1,10 +1,20 @@
 #![allow(dead_code)] // this is a compile pass test
 use diesel::dsl::*;
+use diesel::expression::IntoSql;
 use diesel::helper_types::*;
 use diesel::prelude::*;
 use diesel::sql_types;
+#[cfg(feature = "sqlite")]
+use diesel::sqlite::JsonValidFlag;
 #[cfg(feature = "postgres")]
-use std::ops::Bound;
+use {diesel::sql_types::Integer, std::ops::Bound};
+
+#[derive(AsChangeset, Identifiable)]
+#[diesel(table_name = users)]
+struct UserChanges {
+    id: i32,
+    name: String,
+}
 
 table! {
     users {
@@ -54,6 +64,18 @@ table! {
         name -> Text,
         text_array -> Array<Text>,
         record -> Record<(Integer, Text, Date)>,
+        boolean -> Bool,
+    }
+}
+
+#[cfg(feature = "sqlite")]
+table! {
+    sqlite_extras {
+        id -> Integer,
+        text -> Text,
+        blob -> Binary,
+        json -> Json,
+        jsonb -> Jsonb,
     }
 }
 
@@ -177,10 +199,17 @@ fn test_delete_3() -> _ {
     delete(users::table).filter(users::id.eq(1_i32))
 }
 
-// #[auto_type]
-// fn test_update() -> _ {
-//     update(users::table).set(users::id.eq(42_i32))
-// }
+#[auto_type]
+fn test_update() -> _ {
+    update(users::table).set(users::id.eq(42_i32))
+}
+
+#[auto_type]
+fn test_batch_update() -> _ {
+    let batch: Vec<UserChanges> = vec![];
+
+    update(users::table).set(batch)
+}
 
 #[auto_type]
 fn test_insert1() -> _ {
@@ -254,11 +283,20 @@ fn test_pg_net_expression_methods() -> _ {
 #[auto_type]
 fn test_pg_array_expression_methods() -> _ {
     let v = 42_i32;
+    let a = array::<Integer, (i32,)>((v,));
+
     pg_extras::array
         .overlaps_with(pg_extras::array)
         .and(pg_extras::array.contains(pg_extras::array))
         .and(pg_extras::array.is_contained_by(pg_extras::array))
         .and(pg_extras::array.index(v).eq(v))
+        .and(pg_extras::array.index_nullable(v).eq(v))
+        .and(pg_extras::array.slice(v, v).eq(a))
+        .and(pg_extras::array.slice_nullable(v, v).eq(a.nullable()))
+        .and(pg_extras::array.slice_from(v).eq(a))
+        .and(pg_extras::array.slice_from_nullable(v).eq(a.nullable()))
+        .and(pg_extras::array.slice_to(v).eq(a))
+        .and(pg_extras::array.slice_to_nullable(v).eq(a.nullable()))
         .and(
             pg_extras::array
                 .concat(pg_extras::array)
@@ -357,11 +395,30 @@ fn test_pg_any_json_expression_methods() -> _ {
         .and(pg_extras::name.is_not_json_scalar())
 }
 
+#[cfg(feature = "sqlite")]
+#[auto_type]
+fn test_sqlite_any_json_expression_methods() -> _ {
+    let s: &'static str = "";
+    sqlite_extras::json.retrieve_as_object_sqlite(s)
+}
+
 #[cfg(feature = "postgres")]
 #[auto_type]
 fn test_pg_timestamp_expression_methods() -> _ {
     let s: &'static str = "";
     pg_extras::timestamp.at_time_zone(s)
+}
+
+#[cfg(feature = "postgres")]
+#[auto_type]
+fn test_pg_returning_old() -> _ {
+    diesel::pg::returning::old(users::id)
+}
+
+#[cfg(feature = "mariadb")]
+#[auto_type]
+fn test_mariadb_returning_old() -> _ {
+    diesel::mariadb::returning::old_value(users::id)
 }
 
 #[cfg(feature = "sqlite")]
@@ -375,7 +432,6 @@ fn test_aggregate_functions() -> _ {
     users::table.select((
         avg(users::id),
         count(users::id),
-        count_distinct(users::id),
         count_star(),
         max(users::id),
         min(users::id),
@@ -403,6 +459,8 @@ fn test_normal_functions() -> _ {
 fn postgres_functions() -> _ {
     let bound: sql_types::RangeBound =
         sql_types::RangeBound::LowerBoundExclusiveUpperBoundExclusive;
+    let null_value_treatment: sql_types::NullValueTreatment =
+        sql_types::NullValueTreatment::UseJsonNull;
     (
         lower(pg_extras::range),
         upper(pg_extras::range),
@@ -462,6 +520,173 @@ fn postgres_functions() -> _ {
         json_populate_record(pg_extras::record, pg_extras::json),
         jsonb_populate_record(pg_extras::record, pg_extras::jsonb),
         jsonb_set(pg_extras::jsonb, pg_extras::text_array, pg_extras::jsonb),
+        jsonb_set_create_if_missing(
+            pg_extras::jsonb,
+            pg_extras::text_array,
+            pg_extras::jsonb,
+            pg_extras::boolean,
+        ),
+        jsonb_set_lax(
+            pg_extras::jsonb,
+            pg_extras::text_array,
+            pg_extras::jsonb,
+            pg_extras::boolean,
+            null_value_treatment,
+        ),
+        jsonb_insert(pg_extras::jsonb, pg_extras::text_array, pg_extras::jsonb),
+        jsonb_insert_with_insert_after(
+            pg_extras::jsonb,
+            pg_extras::text_array,
+            pg_extras::jsonb,
+            pg_extras::boolean,
+        ),
+        json_build_array_1(pg_extras::jsonb),
+        json_build_array_2(pg_extras::name, pg_extras::id),
+        jsonb_build_array_1(pg_extras::jsonb),
+        jsonb_build_array_2(pg_extras::text_array, pg_extras::jsonb),
+        json_extract_path_1(pg_extras::json, pg_extras::name),
+        json_extract_path_2(pg_extras::json, pg_extras::name, pg_extras::name),
+        jsonb_extract_path_1(pg_extras::jsonb, pg_extras::name),
+        jsonb_extract_path_2(pg_extras::jsonb, pg_extras::name, pg_extras::name),
+        json_extract_path_text_1(pg_extras::json, pg_extras::name),
+        json_extract_path_text_2(pg_extras::json, pg_extras::name, pg_extras::name),
+        jsonb_extract_path_text_1(pg_extras::jsonb, pg_extras::name),
+        jsonb_extract_path_text_2(pg_extras::jsonb, pg_extras::name, pg_extras::name),
+    )
+}
+
+#[cfg(feature = "sqlite")]
+#[auto_type]
+fn sqlite_functions() -> _ {
+    let flag: JsonValidFlag = JsonValidFlag::Json5;
+    (
+        json(sqlite_extras::text),
+        jsonb(sqlite_extras::blob),
+        json_array_length(sqlite_extras::json),
+        json_array_length_with_path(sqlite_extras::json, sqlite_extras::text),
+        json_error_position(sqlite_extras::text),
+        json_error_position(sqlite_extras::blob),
+        json_pretty(sqlite_extras::json),
+        json_pretty(sqlite_extras::jsonb),
+        json_pretty_with_indentation(sqlite_extras::json, "  "),
+        json_pretty_with_indentation(sqlite_extras::jsonb, "  "),
+        json_valid(sqlite_extras::json),
+        json_valid_with_flags(sqlite_extras::text, flag),
+        json_type(sqlite_extras::json),
+        json_type_with_path(sqlite_extras::json, sqlite_extras::text),
+        json_quote(sqlite_extras::json),
+        json_patch(sqlite_extras::json, sqlite_extras::json),
+        jsonb_patch(sqlite_extras::jsonb, sqlite_extras::jsonb),
+    )
+}
+
+#[cfg(feature = "sqlite")]
+#[auto_type]
+fn sqlite_aggregate_functions() -> _ {
+    (
+        json_group_array(users::name),
+        json_group_array(users::id),
+        jsonb_group_array(users::name),
+        jsonb_group_array(users::id),
+        json_group_object(users::name, users::id),
+        jsonb_group_object(users::name, users::id),
+    )
+}
+
+#[cfg(feature = "sqlite")]
+#[auto_type]
+fn sqlite_variadic_functions() -> _ {
+    (
+        json_array_0(),
+        json_array_1(sqlite_extras::text),
+        json_array_2(sqlite_extras::id, sqlite_extras::json),
+        jsonb_array_0(),
+        jsonb_array_1(sqlite_extras::text),
+        jsonb_array_2(sqlite_extras::id, sqlite_extras::json),
+        json_insert_0(sqlite_extras::json),
+        json_insert_1(sqlite_extras::jsonb, sqlite_extras::text, sqlite_extras::id),
+        json_insert_2(
+            sqlite_extras::json,
+            sqlite_extras::text,
+            sqlite_extras::id,
+            sqlite_extras::text,
+            sqlite_extras::json,
+        ),
+        jsonb_insert_0(sqlite_extras::jsonb),
+        jsonb_insert_1(sqlite_extras::json, sqlite_extras::text, sqlite_extras::id),
+        jsonb_insert_2(
+            sqlite_extras::jsonb,
+            sqlite_extras::text,
+            sqlite_extras::id,
+            sqlite_extras::text,
+            sqlite_extras::json,
+        ),
+        json_object_0(),
+        json_object_1(sqlite_extras::text, sqlite_extras::id),
+        json_object_2(
+            sqlite_extras::text,
+            sqlite_extras::id,
+            sqlite_extras::text,
+            sqlite_extras::json,
+        ),
+        jsonb_object_0(),
+        jsonb_object_1(sqlite_extras::text, sqlite_extras::id),
+        jsonb_object_2(
+            sqlite_extras::text,
+            sqlite_extras::id,
+            sqlite_extras::text,
+            sqlite_extras::json,
+        ),
+        json_remove_0(sqlite_extras::json),
+        json_remove_1(sqlite_extras::jsonb, sqlite_extras::text),
+        json_remove_2(
+            sqlite_extras::json,
+            sqlite_extras::text,
+            sqlite_extras::text,
+        ),
+        jsonb_remove_0(sqlite_extras::jsonb),
+        jsonb_remove_1(sqlite_extras::json, sqlite_extras::text),
+        jsonb_remove_2(
+            sqlite_extras::jsonb,
+            sqlite_extras::text,
+            sqlite_extras::text,
+        ),
+        json_replace_0(sqlite_extras::json),
+        json_replace_1(sqlite_extras::jsonb, sqlite_extras::text, sqlite_extras::id),
+        json_replace_2(
+            sqlite_extras::json,
+            sqlite_extras::text,
+            sqlite_extras::id,
+            sqlite_extras::text,
+            sqlite_extras::json,
+        ),
+        jsonb_replace_0(sqlite_extras::jsonb),
+        jsonb_replace_1(sqlite_extras::json, sqlite_extras::text, sqlite_extras::id),
+        jsonb_replace_2(
+            sqlite_extras::jsonb,
+            sqlite_extras::text,
+            sqlite_extras::id,
+            sqlite_extras::text,
+            sqlite_extras::json,
+        ),
+        json_set_0(sqlite_extras::json),
+        json_set_1(sqlite_extras::jsonb, sqlite_extras::text, sqlite_extras::id),
+        json_set_2(
+            sqlite_extras::json,
+            sqlite_extras::text,
+            sqlite_extras::id,
+            sqlite_extras::text,
+            sqlite_extras::json,
+        ),
+        jsonb_set_0(sqlite_extras::jsonb),
+        jsonb_set_1(sqlite_extras::json, sqlite_extras::text, sqlite_extras::id),
+        jsonb_set_2(
+            sqlite_extras::jsonb,
+            sqlite_extras::text,
+            sqlite_extras::id,
+            sqlite_extras::text,
+            sqlite_extras::json,
+        ),
     )
 }
 
@@ -509,6 +734,11 @@ fn count_query() -> _ {
     users::table.count()
 }
 
+#[auto_type]
+fn test_cast() -> _ {
+    users::id.cast::<sql_types::Text>()
+}
+
 // #[auto_type]
 // fn test_sql_fragment() -> _ {
 //     sql("foo")
@@ -523,3 +753,93 @@ fn count_query() -> _ {
 // fn test_sql_query_2() -> _ {
 //     sql_query("bar").bind::<Integer, _>(1)
 // }
+
+#[auto_type]
+fn window_function() -> _ {
+    (
+        count(users::id).over(),
+        count(users::id).partition_by(users::name),
+        count(users::id).window_filter(users::name.eq(users::name)),
+        count(users::id).window_order(users::name.desc()),
+        count(users::id).over().partition_by(users::name),
+        count(users::id).frame_by(frame::Rows.frame_start_with(2_u64.preceding())),
+        count(users::id).frame_by(frame::Rows.frame_start_with(frame::UnboundedPreceding)),
+        count(users::id).frame_by(
+            frame::Rows.frame_between(frame::UnboundedPreceding, frame::UnboundedFollowing),
+        ),
+        count(users::id).window_order(users::name).frame_by(
+            frame::Groups.frame_start_with_exclusion(frame::CurrentRow, frame::ExcludeGroup),
+        ),
+        count(users::id).frame_by(frame::Range.frame_between_with_exclusion(
+            frame::CurrentRow,
+            7_u64.following(),
+            frame::ExcludeNoOthers,
+        )),
+        count(users::id)
+            .partition_by(users::name)
+            .window_order(users::name.desc())
+            .window_filter(users::name.eq(users::name)),
+    )
+}
+
+#[auto_type]
+fn aggregate_function_expressions() -> _ {
+    (
+        count(users::id).aggregate_distinct(),
+        count(users::id).aggregate_all(),
+        count(users::id).aggregate_filter(users::name.eq(users::name)),
+        count(users::id).aggregate_order(users::id.desc()),
+    )
+}
+
+#[auto_type]
+fn window_functions2() -> _ {
+    (
+        row_number().over(),
+        rank().over(),
+        dense_rank().over(),
+        percent_rank().over(),
+        cume_dist().over(),
+        ntile(users::id).over(),
+        lag(users::id).over(),
+        lag_with_offset(users::id, users::id).over(),
+        lag_with_offset_and_default(users::id, users::id, users::id).over(),
+        lead(users::id).over(),
+        lead_with_offset(users::id, users::id).over(),
+        lead_with_offset_and_default(users::id, users::id, users::id).over(),
+        first_value(users::id).over(),
+        last_value(users::id).over(),
+        nth_value(users::id, 1_i32).over(),
+    )
+}
+
+#[auto_type]
+fn test_upsert_on_conflict() -> _ {
+    insert_into(users::table)
+        .values(users::id.eq(42_i32))
+        .on_conflict(users::id)
+}
+
+#[auto_type]
+fn test_upsert_do_nothing() -> _ {
+    insert_into(users::table)
+        .values(users::id.eq(42_i32))
+        .on_conflict(users::id)
+        .do_nothing()
+}
+
+#[auto_type]
+fn test_upsert_do_update() -> _ {
+    insert_into(users::table)
+        .values(users::id.eq(42_i32))
+        .on_conflict(users::id)
+        .do_update()
+        .set(users::name.eq("foo"))
+}
+
+#[auto_type]
+fn test_upsert_on_conflict_do_nothing() -> _ {
+    insert_into(users::table)
+        .values(users::id.eq(42_i32))
+        .on_conflict_do_nothing()
+}

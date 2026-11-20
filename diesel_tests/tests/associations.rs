@@ -1,7 +1,11 @@
 use crate::schema::*;
 use diesel::*;
 
-#[test]
+// This test reads query results, which requires reading memory
+// allocated by the native sqlite library. Miri cannot track the
+// provenance of that memory when using `-Zmiri-native-lib`.
+#[cfg(not(miri))]
+#[diesel_test_helper::test]
 fn one_to_many_returns_query_source_for_association() {
     let (mut connection, sean, tess, _) = conn_with_test_data();
 
@@ -21,7 +25,11 @@ fn one_to_many_returns_query_source_for_association() {
     assert_eq!(tess_posts, found_posts);
 }
 
-#[test]
+// This test reads query results, which requires reading memory
+// allocated by the native sqlite library. Miri cannot track the
+// provenance of that memory when using `-Zmiri-native-lib`.
+#[cfg(not(miri))]
+#[diesel_test_helper::test]
 fn eager_loading_associations_for_multiple_records() {
     let (mut connection, sean, tess, _) = conn_with_test_data();
 
@@ -38,7 +46,11 @@ fn eager_loading_associations_for_multiple_records() {
     assert_eq!(expected_data, users_and_posts);
 }
 
-#[test]
+// This test reads query results, which requires reading memory
+// allocated by the native sqlite library. Miri cannot track the
+// provenance of that memory when using `-Zmiri-native-lib`.
+#[cfg(not(miri))]
+#[diesel_test_helper::test]
 fn eager_loading_associations_for_multiple_ref_records() {
     let (mut connection, sean, tess, _) = conn_with_test_data();
 
@@ -55,9 +67,8 @@ fn eager_loading_associations_for_multiple_ref_records() {
     assert_eq!(expected_data, users_and_posts);
 }
 
-#[cfg(not(feature = "mysql"))] // FIXME: Figure out how to handle tests that modify schema
 mod eager_loading_with_string_keys {
-    use crate::schema::{connection, drop_table_cascade};
+    use crate::schema::connection;
     use diesel::connection::SimpleConnection;
     use diesel::*;
 
@@ -77,17 +88,18 @@ mod eager_loading_with_string_keys {
         user_id: String,
     }
 
-    #[test]
+    // This test reads query results, which requires reading memory
+    // allocated by the native sqlite library. Miri cannot track the
+    // provenance of that memory when using `-Zmiri-native-lib`.
+    #[cfg(not(miri))]
+    #[diesel_test_helper::test]
     fn eager_loading_associations_for_multiple_records() {
         let connection = &mut connection();
-        drop_table_cascade(connection, "users");
-        drop_table_cascade(connection, "posts");
-        drop_table_cascade(connection, "fk_doesnt_reference_pk");
         connection
             .batch_execute(
                 r#"
-            CREATE TABLE users (id TEXT PRIMARY KEY NOT NULL);
-            CREATE TABLE posts (id TEXT PRIMARY KEY NOT NULL, user_id TEXT NOT NULL);
+            CREATE TEMPORARY TABLE users (id VARCHAR(50) PRIMARY KEY NOT NULL);
+            CREATE TEMPORARY TABLE posts (id VARCHAR(50) PRIMARY KEY NOT NULL, user_id TEXT NOT NULL);
             INSERT INTO users (id) VALUES ('Sean'), ('Tess');
             INSERT INTO posts (id, user_id) VALUES ('Hello', 'Sean'), ('World', 'Sean'), ('Hello 2', 'Tess');
         "#,
@@ -110,7 +122,11 @@ mod eager_loading_with_string_keys {
     }
 }
 
-#[test]
+// This test reads query results, which requires reading memory
+// allocated by the native sqlite library. Miri cannot track the
+// provenance of that memory when using `-Zmiri-native-lib`.
+#[cfg(not(miri))]
+#[diesel_test_helper::test]
 fn grouping_associations_maintains_ordering() {
     let (mut connection, sean, tess, _) = conn_with_test_data();
 
@@ -145,7 +161,7 @@ fn grouping_associations_maintains_ordering() {
     assert_eq!(expected_data, users_and_posts);
 }
 
-#[test]
+#[diesel_test_helper::test]
 fn associations_can_be_grouped_multiple_levels_deep() {
     // I'm manually defining the data rather than loading from the database here,
     // as it makes the tests *way* more readable if I omit setup here. This is
@@ -192,7 +208,7 @@ fn associations_can_be_grouped_multiple_levels_deep() {
     assert_eq!(expected_data, data);
 }
 
-#[test]
+#[diesel_test_helper::test]
 fn self_referencing_associations() {
     #[derive(Insertable, Queryable, Associations, Identifiable, Debug, Clone, Copy, PartialEq)]
     #[diesel(table_name = trees)]
@@ -277,10 +293,12 @@ fn conn_with_test_data() -> (TestConnection, User, User, User) {
     (connection, sean, tess, jim)
 }
 
-#[test]
-// FIXME: Figure out how to handle tests that modify schema
-#[cfg(not(feature = "mysql"))]
+#[diesel_test_helper::test]
 // https://github.com/rust-lang/rust/issues/124396
+// This test reads query results, which requires reading memory
+// allocated by the native sqlite library. Miri cannot track the
+// provenance of that memory when using `-Zmiri-native-lib`.
+#[cfg(not(miri))]
 #[allow(unknown_lints, non_local_definitions)]
 fn custom_foreign_key() {
     use diesel::connection::SimpleConnection;
@@ -324,9 +342,9 @@ fn custom_foreign_key() {
     connection
         .batch_execute(
             r#"
-            CREATE TABLE users1 (id SERIAL PRIMARY KEY,
+            CREATE TEMPORARY TABLE users1 (id SERIAL PRIMARY KEY,
                                 name TEXT NOT NULL);
-            CREATE TABLE posts1 (id SERIAL PRIMARY KEY,
+            CREATE TEMPORARY TABLE posts1 (id SERIAL PRIMARY KEY,
                                 belongs_to_user INTEGER NOT NULL,
                                 title TEXT NOT NULL);
             INSERT INTO users1 (id, name) VALUES (1, 'Sean'), (2, 'Tess');
@@ -371,4 +389,19 @@ fn custom_foreign_key() {
         users1::table.inner_join(posts1::table).load(connection),
         Ok(vec![(sean.clone(), post1), (tess, post2), (sean, post3)])
     );
+}
+
+#[diesel_test_helper::test]
+/// Verify that tuples of columns implement HasTable
+fn tuples_of_columns_implement_has_table() {
+    use diesel::associations::HasTable;
+
+    // Composite tuple case
+    let _users: users::table = <(User, NewUser)>::table();
+
+    // Triple element tuple case
+    let _users: users::table = <(User, User, NewUser)>::table();
+
+    // Single element tuple case
+    let _users: users::table = <(NewUser,)>::table();
 }

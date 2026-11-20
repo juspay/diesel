@@ -8,17 +8,23 @@ use super::result::PgResult;
 use crate::QueryResult;
 
 #[allow(missing_debug_implementations)] // `PgConnection` is not debug
-pub(in crate::pg) struct CopyFromSink<'conn> {
+pub struct CopyFromSink<'conn> {
     conn: &'conn mut RawConnection,
+    finished: bool,
 }
 
 impl<'conn> CopyFromSink<'conn> {
     pub(super) fn new(conn: &'conn mut RawConnection) -> Self {
-        Self { conn }
+        Self {
+            conn,
+            finished: false,
+        }
     }
 
-    pub(super) fn finish(self, err: Option<String>) -> QueryResult<()> {
-        self.conn.finish_copy_from(err)
+    pub(super) fn finish(mut self, err: Option<String>) -> QueryResult<()> {
+        self.conn
+            .finish_copy_from(err)
+            .inspect(|_| self.finished = true)
     }
 }
 
@@ -26,12 +32,20 @@ impl Write for CopyFromSink<'_> {
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
         self.conn
             .put_copy_data(buf)
-            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+            .map_err(std::io::Error::other)?;
         Ok(buf.len())
     }
 
     fn flush(&mut self) -> std::io::Result<()> {
         Ok(())
+    }
+}
+
+impl Drop for CopyFromSink<'_> {
+    fn drop(&mut self) {
+        if !self.finished {
+            let _ = self.conn.consume_results();
+        }
     }
 }
 
@@ -42,23 +56,25 @@ pub struct CopyToBuffer<'conn> {
     offset: usize,
     len: usize,
     result: PgResult,
+    done: bool,
 }
 
 impl<'conn> CopyToBuffer<'conn> {
     pub(super) fn new(conn: &'conn mut RawConnection, result: PgResult) -> Self {
         Self {
             conn,
-            ptr: std::ptr::null_mut(),
+            ptr: core::ptr::null_mut(),
             offset: 0,
             len: 0,
             result,
+            done: false,
         }
     }
 
     #[allow(unsafe_code)] // construct a slice from a raw ptr
     pub(crate) fn data_slice(&self) -> &[u8] {
         if !self.ptr.is_null() && self.offset < self.len {
-            let slice = unsafe { std::slice::from_raw_parts(self.ptr as *const u8, self.len - 1) };
+            let slice = unsafe { core::slice::from_raw_parts(self.ptr as *const u8, self.len - 1) };
             &slice[self.offset..]
         } else {
             &[]
@@ -73,9 +89,10 @@ impl<'conn> CopyToBuffer<'conn> {
 impl Drop for CopyToBuffer<'_> {
     #[allow(unsafe_code)] // ffi code
     fn drop(&mut self) {
+        let _ = self.conn.consume_results();
         if !self.ptr.is_null() {
             unsafe { pq_sys::PQfreemem(self.ptr as *mut ffi::c_void) };
-            self.ptr = std::ptr::null_mut();
+            self.ptr = core::ptr::null_mut();
         }
     }
 }
@@ -93,27 +110,31 @@ impl Read for CopyToBuffer<'_> {
 impl BufRead for CopyToBuffer<'_> {
     #[allow(unsafe_code)] // ffi code + ptr arithmetic
     fn fill_buf(&mut self) -> std::io::Result<&[u8]> {
-        if self.data_slice().is_empty() {
-            unsafe {
+        if self.data_slice().is_empty() && !self.done {
+            let len = unsafe {
                 if !self.ptr.is_null() {
                     pq_sys::PQfreemem(self.ptr as *mut ffi::c_void);
-                    self.ptr = std::ptr::null_mut();
+                    self.ptr = core::ptr::null_mut();
                 }
-                let len =
-                    pq_sys::PQgetCopyData(self.conn.internal_connection.as_ptr(), &mut self.ptr, 0);
-                match len {
-                    len if len >= 0 => {
-                        self.len = 1 + usize::try_from(len)
-                            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?
-                    }
-                    -1 => self.len = 0,
-                    _ => {
-                        let error = self.conn.last_error_message();
-                        return Err(std::io::Error::new(std::io::ErrorKind::Other, error));
-                    }
+                pq_sys::PQgetCopyData(self.conn.internal_connection.as_ptr(), &mut self.ptr, 0)
+            };
+            match len {
+                len if len >= 0 => {
+                    self.len = 1 + usize::try_from(len).map_err(std::io::Error::other)?
                 }
-                self.offset = 0;
+                -1 => {
+                    self.done = true;
+                    self.len = 0;
+                    self.conn.consume_results().map_err(std::io::Error::other)?;
+                }
+                _ => {
+                    let error = self.conn.last_error_message();
+                    self.done = true;
+                    self.len = 0;
+                    return Err(std::io::Error::other(error));
+                }
             }
+            self.offset = 0;
         }
         Ok(self.data_slice())
     }

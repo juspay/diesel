@@ -1,19 +1,32 @@
 #![allow(unsafe_code)] // ffi code
 extern crate pq_sys;
 
-use std::ffi::CString;
-use std::os::raw as libc;
-use std::ptr;
+use alloc::ffi::CString;
+use core::ffi as libc;
+use core::ptr;
 
 use super::result::PgResult;
+use super::statement_cache::PrepareForCache;
+use crate::connection::statement_cache::PreparedStatement;
 use crate::pg::PgTypeMetadata;
 use crate::result::QueryResult;
 
 use super::raw::RawConnection;
 
+enum StatementKind {
+    Unnamed { sql: CString, param_types: Vec<u32> },
+    Named { name: CString },
+}
+
 pub(crate) struct Statement {
-    name: CString,
+    kind: StatementKind,
     param_formats: Vec<libc::c_int>,
+}
+
+impl PreparedStatement for Statement {
+    fn parameter_count(&self) -> u64 {
+        self.param_formats.len() as u64
+    }
 }
 
 impl Statement {
@@ -22,7 +35,20 @@ impl Statement {
         raw_connection: &mut RawConnection,
         param_data: &[Option<Vec<u8>>],
         row_by_row: bool,
+        disallow_copy: bool,
     ) -> QueryResult<PgResult> {
+        // This check may seem redundant to the general check in the statement cache
+        // but it's mostly here as in depth defence to prevent libpq
+        // performing an out of bounds memory access for direct calls
+        if self.param_formats.len() != param_data.len() {
+            return Err(
+                crate::connection::statement_cache::invalid_prepared_statement_parameter_count(
+                    self.param_formats.len(),
+                    param_data.len(),
+                ),
+            );
+        }
+
         let params_pointer = param_data
             .iter()
             .map(|data| {
@@ -35,64 +61,135 @@ impl Statement {
             .iter()
             .map(|data| data.as_ref().map(|d| d.len().try_into()).unwrap_or(Ok(0)))
             .collect::<Result<Vec<_>, _>>()
-            .map_err(|e| crate::result::Error::SerializationError(Box::new(e)))?;
-        let param_count: libc::c_int = params_pointer
-            .len()
-            .try_into()
-            .map_err(|e| crate::result::Error::SerializationError(Box::new(e)))?;
-        unsafe {
-            raw_connection.send_query_prepared(
-                self.name.as_ptr(),
-                param_count,
-                params_pointer.as_ptr(),
-                param_lengths.as_ptr(),
-                self.param_formats.as_ptr(),
-                1,
-            )
-        }?;
+            .map_err(|_: core::num::TryFromIntError| {
+                crate::result::Error::SerializationError(
+                    "A bind parameter's serialized size is bigger than fits on an i32".into(),
+                )
+            })?;
+        let param_count: libc::c_int =
+            params_pointer
+                .len()
+                .try_into()
+                .map_err(|_: core::num::TryFromIntError| {
+                    crate::result::Error::SerializationError(
+                        "There are more than i32::MAX bind parameters".into(),
+                    )
+                })?;
+
+        match &self.kind {
+            StatementKind::Named { name } => {
+                unsafe {
+                    // execute the previously prepared statement
+                    // in autocommit mode, this will be a new transaction
+                    raw_connection.send_query_prepared(
+                        name.as_ptr(),
+                        param_count,
+                        params_pointer.as_ptr(),
+                        param_lengths.as_ptr(),
+                        self.param_formats.as_ptr(),
+                        1,
+                    )
+                }?
+            }
+            StatementKind::Unnamed { sql, param_types } => unsafe {
+                // execute the unnamed prepared statement using send_query_params
+                // which internally calls PQsendQueryParams, making sure the
+                // prepare and execute happens in a single transaction. This
+                // makes sure these are handled by PgBouncer.
+                // See https://github.com/diesel-rs/diesel/pull/4539
+                raw_connection.send_query_params(
+                    sql.as_ptr(),
+                    param_count,
+                    param_types.as_ptr(),
+                    params_pointer.as_ptr(),
+                    param_lengths.as_ptr(),
+                    self.param_formats.as_ptr(),
+                    1,
+                )
+            }?,
+        };
+
         if row_by_row {
             raw_connection.enable_row_by_row_mode()?;
         }
-        Ok(raw_connection.get_next_result()?.expect("Is never none"))
+        let result = raw_connection.get_next_result()?.expect("Is never none");
+        handle_copy_in_normal_stmt(raw_connection, disallow_copy, result)
     }
 
     pub(super) fn prepare(
         raw_connection: &mut RawConnection,
         sql: &str,
-        name: Option<&str>,
+        is_cached: PrepareForCache,
         param_types: &[PgTypeMetadata],
     ) -> QueryResult<Self> {
-        let name = CString::new(name.unwrap_or(""))?;
-        let sql = CString::new(sql)?;
+        let sql_cstr = CString::new(sql)?;
         let param_types_vec = param_types
             .iter()
             .map(|x| x.oid())
             .collect::<Result<Vec<_>, _>>()
             .map_err(|e| crate::result::Error::SerializationError(Box::new(e)))?;
 
-        let internal_result = unsafe {
-            let param_count: libc::c_int = param_types
-                .len()
-                .try_into()
-                .map_err(|e| crate::result::Error::SerializationError(Box::new(e)))?;
-            raw_connection.prepare(
-                name.as_ptr(),
-                sql.as_ptr(),
-                param_count,
-                param_types_to_ptr(Some(&param_types_vec)),
-            )
-        };
-        PgResult::new(internal_result?, raw_connection)?;
+        match is_cached {
+            PrepareForCache::Yes { counter } => {
+                // For named/cached statements, prepare as usual using a prepare phase and then
+                // an execute phase
+                let name_cstr = CString::new(format!("__diesel_stmt_{counter}"))?;
+                let internal_result =
+                    unsafe {
+                        let param_count: libc::c_int = param_types.len().try_into().map_err(
+                            |_: core::num::TryFromIntError| {
+                                crate::result::Error::SerializationError(
+                                    "There are more than i32::MAX bind parameters".into(),
+                                )
+                            },
+                        )?;
+                        raw_connection.prepare(
+                            name_cstr.as_ptr(),
+                            sql_cstr.as_ptr(),
+                            param_count,
+                            param_types_vec.as_ptr(),
+                        )
+                    };
+                PgResult::new(internal_result?, raw_connection)?;
 
-        Ok(Statement {
-            name,
-            param_formats: vec![1; param_types.len()],
-        })
+                Ok(Statement {
+                    kind: StatementKind::Named { name: name_cstr },
+                    param_formats: vec![1; param_types.len()],
+                })
+            }
+            PrepareForCache::No => {
+                // For unnamed statements, we'll return a Statement object without
+                // actually preparing it. This allows us to use send_query_params
+                // later in the execute call. This is needed to better interface
+                // with PgBouncer which cannot handle unnamed prepared statements
+                // when those are prepared and executed in separate transactions.
+                // See https://github.com/diesel-rs/diesel/pull/4539
+                Ok(Statement {
+                    kind: StatementKind::Unnamed {
+                        sql: sql_cstr,
+                        param_types: param_types_vec,
+                    },
+                    param_formats: vec![1; param_types.len()],
+                })
+            }
+        }
     }
 }
 
-fn param_types_to_ptr(param_types: Option<&Vec<u32>>) -> *const pq_sys::Oid {
-    param_types
-        .map(|types| types.as_ptr())
-        .unwrap_or(ptr::null())
+pub(super) fn handle_copy_in_normal_stmt(
+    raw_connection: &mut RawConnection,
+    disallow_copy: bool,
+    result: PgResult,
+) -> QueryResult<PgResult> {
+    if disallow_copy
+        && matches!(
+            result.result_status(),
+            pq_sys::ExecStatusType::PGRES_COPY_IN
+                | pq_sys::ExecStatusType::PGRES_COPY_OUT
+                | pq_sys::ExecStatusType::PGRES_COPY_BOTH
+        )
+    {
+        raw_connection.consume_results()?;
+    }
+    Ok(result)
 }

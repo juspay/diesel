@@ -1,0 +1,43 @@
+[advisories]
+ignore = [
+    # Chrono support is part of Diesel's public API. This advisory marks every
+    # release as unmaintained and provides no fixed version to upgrade to.
+    { id = "RUSTSEC-2026-0543", reason = "chrono support is a public API; no maintained release is available" },
+]
+
+[licenses]
+# We have to be careful on this part since we set 'unlicensed' to be allowed in order to minimize the output
+# (Only show unallowed licenses as error)
+#unlicensed = "allow"
+confidence-threshold = 0.90
+allow = [
+    "Apache-2.0",
+    "MIT",
+    "PostgreSQL",
+    "Apache-2.0 WITH LLVM-exception",
+    "Unicode-3.0",
+    "GPL-2.0-only",
+    "Zlib",
+    "MPL-2.0",
+    "ISC",
+    "BSD-3-Clause",
+    "CDLA-Permissive-2.0",
+]
+# ignore private packages
+private = { ignore = true }
+
+[bans]
+multiple-versions = "deny"
+skip-tree = [
+    "windows-targets",
+    "windows-sys",
+    "r2d2",
+    "syn",
+    "const-oid",
+    "wasi",
+]
+
+[bans.build]
+executables = "deny"
+#interpreted = "deny"
+#include-archives = true

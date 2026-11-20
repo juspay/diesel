@@ -1,9 +1,12 @@
 use super::schema::*;
-#[cfg(not(feature = "mysql"))]
 use crate::schema_dsl::*;
 use diesel::*;
 
-#[test]
+// This test reads query results, which requires reading memory
+// allocated by the native sqlite library. Miri cannot track the
+// provenance of that memory when using `-Zmiri-native-lib`.
+#[cfg(not(miri))]
+#[diesel_test_helper::test]
 fn selecting_basic_data() {
     use crate::schema::users::dsl::*;
 
@@ -20,7 +23,11 @@ fn selecting_basic_data() {
     assert_eq!(expected_data, actual_data);
 }
 
-#[test]
+// This test reads query results, which requires reading memory
+// allocated by the native sqlite library. Miri cannot track the
+// provenance of that memory when using `-Zmiri-native-lib`.
+#[cfg(not(miri))]
+#[diesel_test_helper::test]
 fn selecting_a_struct() {
     use crate::schema::users::dsl::*;
     let connection = &mut connection();
@@ -37,7 +44,11 @@ fn selecting_a_struct() {
     assert_eq!(expected_users, actual_users);
 }
 
-#[test]
+// This test reads query results, which requires reading memory
+// allocated by the native sqlite library. Miri cannot track the
+// provenance of that memory when using `-Zmiri-native-lib`.
+#[cfg(not(miri))]
+#[diesel_test_helper::test]
 fn with_safe_select() {
     use crate::schema::users::dsl::*;
 
@@ -52,7 +63,7 @@ fn with_safe_select() {
     assert_eq!(vec!["Sean".to_string(), "Tess".to_string()], names);
 }
 
-#[test]
+#[diesel_test_helper::test]
 fn with_select_sql() {
     use diesel::dsl::sql;
 
@@ -72,7 +83,11 @@ fn with_select_sql() {
     assert_eq!(Ok(3), select_count.first(connection));
 }
 
-#[test]
+// This test reads query results, which requires reading memory
+// allocated by the native sqlite library. Miri cannot track the
+// provenance of that memory when using `-Zmiri-native-lib`.
+#[cfg(not(miri))]
+#[diesel_test_helper::test]
 fn selecting_nullable_followed_by_non_null() {
     use crate::schema::users::dsl::*;
 
@@ -88,7 +103,7 @@ fn selecting_nullable_followed_by_non_null() {
     assert_eq!(expected_data, data);
 }
 
-#[test]
+#[diesel_test_helper::test]
 fn selecting_expression_with_bind_param() {
     use crate::schema::users::dsl::*;
 
@@ -111,13 +126,12 @@ table! {
     }
 }
 
-#[test]
-#[cfg(not(feature = "mysql"))] // FIXME: Figure out how to handle tests that modify schema
+#[diesel_test_helper::test]
 fn selecting_columns_and_tables_with_reserved_names() {
     use self::select::dsl::*;
 
     let connection = &mut connection();
-    create_table(
+    create_temporary_table(
         "select",
         (
             integer("id").primary_key().auto_increment(),
@@ -126,7 +140,11 @@ fn selecting_columns_and_tables_with_reserved_names() {
     )
     .execute(connection)
     .unwrap();
-    diesel::sql_query("INSERT INTO \"select\" (\"join\") VALUES (1), (2), (3)")
+
+    let records = vec![join.eq(1), join.eq(2), join.eq(3)];
+
+    insert_into(select)
+        .values(&records)
         .execute(connection)
         .unwrap();
 
@@ -139,12 +157,14 @@ fn selecting_columns_and_tables_with_reserved_names() {
     assert_eq!(expected_data, actual_data);
 }
 
-#[test]
-#[cfg(not(feature = "mysql"))] // FIXME: Figure out how to handle tests that modify schema
+// This test reads query results, which requires reading memory
+// allocated by the native sqlite library. Miri cannot track the
+// provenance of that memory when using `-Zmiri-native-lib`.
+#[cfg(not(miri))]
+#[diesel_test_helper::test]
 fn selecting_columns_with_different_definition_order() {
     let connection = &mut connection();
-    drop_table_cascade(connection, "users");
-    create_table(
+    create_temporary_table(
         "users",
         (
             integer("id").primary_key().auto_increment(),
@@ -164,7 +184,11 @@ fn selecting_columns_with_different_definition_order() {
     assert_eq!(Ok(&expected_user), user_from_select.as_ref());
 }
 
-#[test]
+// This test reads query results, which requires reading memory
+// allocated by the native sqlite library. Miri cannot track the
+// provenance of that memory when using `-Zmiri-native-lib`.
+#[cfg(not(miri))]
+#[diesel_test_helper::test]
 fn selection_using_subselect() {
     use crate::schema::posts::dsl::*;
 
@@ -224,8 +248,8 @@ table! {
 }
 
 // the test is somehow broken on some mariadb versions
-#[cfg(not(any(feature = "sqlite", feature = "mysql")))]
-#[test]
+#[cfg(not(any(feature = "sqlite", feature = "mariadb")))]
+#[diesel_test_helper::test]
 fn select_for_update_locks_selected_rows() {
     use self::users_select_for_update::dsl::*;
     use diesel::connection::SimpleConnection;
@@ -234,10 +258,14 @@ fn select_for_update_locks_selected_rows() {
     use std::thread;
     use std::time::Duration;
 
+    let conn_ddl = &mut connection_without_transaction();
+    let _guard = DropTable {
+        connection: conn_ddl,
+        table_name: "users_select_for_update",
+        can_drop: true,
+    };
+
     let mut conn_1 = connection_without_transaction();
-    diesel::sql_query("DROP TABLE IF EXISTS users_select_for_update")
-        .execute(&mut conn_1)
-        .unwrap();
     create_table(
         "users_select_for_update",
         (
@@ -248,6 +276,7 @@ fn select_for_update_locks_selected_rows() {
     )
     .execute(&mut conn_1)
     .unwrap();
+
     conn_1
         .batch_execute(
             "
@@ -301,9 +330,16 @@ fn select_for_update_locks_selected_rows() {
 }
 
 #[cfg(feature = "postgres")]
-#[test]
+#[diesel_test_helper::test]
 fn select_for_update_modifiers() {
     use self::users_select_for_update_modifiers::dsl::*;
+
+    let conn_ddl = &mut connection_without_transaction();
+    let _guard = DropTable {
+        connection: conn_ddl,
+        table_name: "users_select_for_update_modifiers",
+        can_drop: true,
+    };
 
     // We need to actually commit some data for the
     // test
@@ -311,10 +347,6 @@ fn select_for_update_modifiers() {
     let conn_2 = &mut connection();
     let conn_3 = &mut connection();
 
-    // Recreate the table
-    diesel::sql_query("DROP TABLE IF EXISTS users_select_for_update_modifiers")
-        .execute(conn_1)
-        .unwrap();
     create_table(
         "users_select_for_update_modifiers",
         (
@@ -359,7 +391,7 @@ fn select_for_update_modifiers() {
     // Make sure we errored in the correct way (without timing out)
     assert!(result.is_err());
     if !format!("{result:?}").contains("could not obtain lock on row") {
-        panic!("{:?}", result);
+        panic!("{result:?}");
     }
 
     // Try to access the "Sean" row with `SKIP LOCKED`
@@ -375,10 +407,20 @@ fn select_for_update_modifiers() {
 }
 
 #[cfg(feature = "postgres")]
-#[test]
+#[diesel_test_helper::test]
 fn select_for_no_key_update_modifiers() {
     use self::users_fk_for_no_key_update::dsl::*;
     use self::users_select_for_no_key_update::dsl::*;
+
+    let conn_ddl = &mut connection_without_transaction();
+    let _guard = DropTableInOrder {
+        connection: conn_ddl,
+        table_names: [
+            "users_fk_for_no_key_update",
+            "users_select_for_no_key_update",
+        ],
+        can_drop: true,
+    };
 
     // We need to actually commit some data for the
     // test
@@ -386,14 +428,6 @@ fn select_for_no_key_update_modifiers() {
     let conn_2 = &mut connection();
     let conn_3 = &mut connection();
     let conn_4 = &mut connection();
-
-    // Recreate the table
-    diesel::sql_query("DROP TABLE IF EXISTS users_fk_for_no_key_update")
-        .execute(conn_1)
-        .unwrap();
-    diesel::sql_query("DROP TABLE IF EXISTS users_select_for_no_key_update")
-        .execute(conn_1)
-        .unwrap();
 
     create_table(
         "users_select_for_no_key_update",
@@ -486,11 +520,15 @@ fn select_for_no_key_update_modifiers() {
     // Times out instead of inserting row
     assert!(result.is_err());
     if !format!("{result:?}").contains("canceling statement due to statement timeout") {
-        panic!("{:?}", result);
+        panic!("{result:?}");
     }
 }
 
-#[test]
+// This test reads query results, which requires reading memory
+// allocated by the native sqlite library. Miri cannot track the
+// provenance of that memory when using `-Zmiri-native-lib`.
+#[cfg(not(miri))]
+#[diesel_test_helper::test]
 fn select_can_be_called_on_query_that_is_valid_subselect_but_invalid_query() {
     let connection = &mut connection_with_sean_and_tess_in_users_table();
     let sean = find_user_by_name("Sean", connection);
@@ -513,7 +551,11 @@ fn select_can_be_called_on_query_that_is_valid_subselect_but_invalid_query() {
     assert_eq!(Ok(vec![tess]), users_with_post_using_name_as_title);
 }
 
-#[test]
+// This test reads query results, which requires reading memory
+// allocated by the native sqlite library. Miri cannot track the
+// provenance of that memory when using `-Zmiri-native-lib`.
+#[cfg(not(miri))]
+#[diesel_test_helper::test]
 fn selecting_multiple_aggregate_expressions_without_group_by() {
     use self::users::dsl::*;
     use diesel::dsl::{count_star, max};

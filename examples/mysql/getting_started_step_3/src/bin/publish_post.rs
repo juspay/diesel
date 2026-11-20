@@ -1,3 +1,4 @@
+#![allow(clippy::print_stdout, reason = "Example code")]
 use self::models::Post;
 use diesel::prelude::*;
 use getting_started_step_3_mysql::*;
@@ -22,7 +23,7 @@ fn main() {
                 .execute(connection)?;
             Ok(post)
         })
-        .unwrap_or_else(|_: diesel::result::Error| panic!("Unable to find post {}", id));
+        .unwrap_or_else(|_: diesel::result::Error| panic!("Unable to find post {id}"));
 
     println!("Published post {}", post.title);
 }

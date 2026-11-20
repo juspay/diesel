@@ -1,7 +1,7 @@
 use crate::schema::*;
 use diesel::*;
 
-#[test]
+#[diesel_test_helper::test]
 fn having_generates_having_sql() {
     let source = users::table
         .inner_join(posts::table)
@@ -29,7 +29,11 @@ fn having_generates_having_sql() {
     assert!(source.execute(conn).is_ok());
 }
 
-#[test]
+// This test reads query results, which requires reading memory
+// allocated by the native sqlite library. Miri cannot track the
+// provenance of that memory when using `-Zmiri-native-lib`.
+#[cfg(not(miri))]
+#[diesel_test_helper::test]
 fn simple_having_with_group_by() {
     let connection = &mut connection();
     diesel::sql_query("INSERT INTO users (id, name) VALUES (1, 'Sean'), (2, 'Tess')")
@@ -59,7 +63,11 @@ fn simple_having_with_group_by() {
     assert_eq!(expected_data, data);
 }
 
-#[test]
+// This test reads query results, which requires reading memory
+// allocated by the native sqlite library. Miri cannot track the
+// provenance of that memory when using `-Zmiri-native-lib`.
+#[cfg(not(miri))]
+#[diesel_test_helper::test]
 fn boxed_simple_having_with_group_by() {
     let connection = &mut connection();
     diesel::sql_query("INSERT INTO users (id, name) VALUES (1, 'Sean'), (2, 'Tess')")
@@ -90,7 +98,11 @@ fn boxed_simple_having_with_group_by() {
     assert_eq!(expected_data, data);
 }
 
-#[test]
+// This test reads query results, which requires reading memory
+// allocated by the native sqlite library. Miri cannot track the
+// provenance of that memory when using `-Zmiri-native-lib`.
+#[cfg(not(miri))]
+#[diesel_test_helper::test]
 fn multi_condition_having_with_group_by() {
     let connection = &mut connection();
     diesel::sql_query("INSERT INTO users (id, name) VALUES (1, 'Sean'), (2, 'Tess'), (3, 'Nick')")
@@ -120,7 +132,11 @@ fn multi_condition_having_with_group_by() {
     assert_eq!(expected_data, data);
 }
 
-#[test]
+// This test reads query results, which requires reading memory
+// allocated by the native sqlite library. Miri cannot track the
+// provenance of that memory when using `-Zmiri-native-lib`.
+#[cfg(not(miri))]
+#[diesel_test_helper::test]
 fn boxed_multi_condition_having_with_group_by() {
     let connection = &mut connection();
     diesel::sql_query("INSERT INTO users (id, name) VALUES (1, 'Sean'), (2, 'Tess'), (3, 'Nick')")

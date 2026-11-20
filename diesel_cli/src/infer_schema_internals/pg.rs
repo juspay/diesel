@@ -1,16 +1,80 @@
+use super::TableName;
 use super::data_structures::*;
 use super::information_schema::DefaultSchema;
-use super::TableName;
 use crate::print_schema::ColumnSorting;
 use diesel::connection::DefaultLoadingMode;
-use diesel::deserialize::{self, FromStaticSqlRow};
 use diesel::dsl::AsExprOf;
-use diesel::expression::AsExpression;
 use diesel::pg::Pg;
+use diesel::prelude::table;
 use diesel::prelude::*;
-use diesel::sql_types::{self, Array, Text};
+use diesel::sql_types;
 use heck::ToUpperCamelCase;
 use std::borrow::Cow;
+
+#[diesel::declare_sql_function]
+extern "SQL" {
+    #[aggregate]
+    fn array_agg(input: sql_types::Text) -> sql_types::Array<sql_types::Text>;
+
+    fn col_description(
+        table: sql_types::Oid,
+        column_number: sql_types::BigInt,
+    ) -> sql_types::Nullable<sql_types::Text>;
+
+    fn obj_description(
+        oid: sql_types::Oid,
+        catalog: sql_types::Text,
+    ) -> sql_types::Nullable<sql_types::Text>;
+
+    fn quote_ident(ident: sql_types::Text) -> sql_types::Text;
+}
+
+mod information_schema {
+    use diesel::prelude::table;
+
+    table! {
+        information_schema.columns (table_schema, table_name, column_name) {
+            table_schema -> VarChar,
+            table_name -> VarChar,
+            column_name -> VarChar,
+            #[sql_name = "is_nullable"]
+            __is_nullable -> VarChar,
+            character_maximum_length -> Nullable<Integer>,
+            ordinal_position -> BigInt,
+            udt_name -> VarChar,
+            udt_schema -> VarChar,
+            domain_name -> Nullable<VarChar>,
+            domain_schema -> Nullable<VarChar>,
+        }
+    }
+}
+
+table! {
+    pg_type(oid) {
+        oid -> Oid,
+        typname -> Text,
+        typnamespace -> Oid,
+    }
+}
+
+table! {
+    pg_enum(oid) {
+        oid -> Oid,
+        enumtypid -> Oid,
+        enumsortorder -> Float,
+        enumlabel -> Text,
+    }
+}
+
+table! {
+    pg_matviews(schemaname, matviewname) {
+        schemaname -> Text,
+        matviewname -> Text,
+        definition -> Text,
+    }
+}
+
+allow_tables_to_appear_in_same_query!(pg_type, pg_enum);
 
 #[tracing::instrument]
 pub fn determine_column_type(
@@ -35,8 +99,7 @@ pub fn determine_column_type(
         tracing::info!("Cannot coerce varchar[] into text[]");
         eprintln!(
             "The column `{}` is of type `{}[]`. This will cause problems when using Diesel. You should consider changing the column type to `text[]`.",
-            attr.column_name,
-            tpe
+            attr.column_name, tpe
         );
     }
 
@@ -49,33 +112,70 @@ pub fn determine_column_type(
             }
         }),
         sql_name: tpe.to_string(),
-        rust_name: tpe.to_upper_camel_case(),
+        rust_name: super::inference::make_valid_identifier(
+            tpe.to_upper_camel_case().into(),
+            super::inference::IdentifierKind::Type,
+        )
+        .into_owned(),
         is_array,
         is_nullable: attr.nullable,
         is_unsigned: false,
+        record: None,
         max_length: attr.max_length,
+        unmodified_type: attr.type_name.clone(),
     })
 }
 
 diesel::postfix_operator!(Regclass, "::regclass", sql_types::Oid, backend: Pg);
 
-fn regclass(table: &TableName) -> Regclass<AsExprOf<String, sql_types::Text>> {
+fn regclass<'a, QS>(
+    table: &'a TableName,
+) -> Regclass<Box<dyn BoxableExpression<QS, Pg, SqlType = sql_types::Text> + 'a>> {
     let table_name = match table.schema {
-        Some(ref schema_name) => format!("\"{}\".\"{}\"", schema_name, table.sql_name),
-        None => format!("\"{}\"", table.sql_name),
+        Some(ref schema_name) => Box::new(
+            quote_ident(schema_name)
+                .concat(".")
+                .concat(quote_ident(&table.sql_name)),
+        )
+            as Box<dyn BoxableExpression<_, _, SqlType = sql_types::Text>>,
+        None => Box::new(quote_ident(&table.sql_name)),
     };
 
-    Regclass::new(<String as AsExpression<sql_types::Text>>::as_expression(
-        table_name,
-    ))
+    Regclass::new(table_name)
 }
 
-diesel::define_sql_function!(fn col_description(table: sql_types::Oid, column_number: sql_types::BigInt) -> sql_types::Nullable<sql_types::Text>);
+diesel::postfix_operator!(RegNamespace, "::regnamespace", sql_types::Oid, backend: Pg);
+
+fn regnamespace(schema: &str) -> RegNamespace<quote_ident<AsExprOf<&str, sql_types::Text>>> {
+    RegNamespace::new(quote_ident(schema))
+}
+
+#[derive(Queryable, QueryableByName)]
+struct ColumnRow {
+    #[diesel(sql_type = sql_types::Text)]
+    column_name: String,
+    #[diesel(sql_type = sql_types::Text)]
+    type_name: String,
+    #[diesel(sql_type = sql_types::Nullable<sql_types::Text>)]
+    type_schema: Option<String>,
+    #[diesel(sql_type = sql_types::Nullable<sql_types::Text>)]
+    domain_name: Option<String>,
+    #[diesel(sql_type = sql_types::Nullable<sql_types::Text>)]
+    domain_schema: Option<String>,
+    #[diesel(sql_type = sql_types::Text)]
+    nullable: String,
+    #[diesel(sql_type = sql_types::Nullable<sql_types::Integer>)]
+    max_length: Option<i32>,
+    #[diesel(sql_type = sql_types::Nullable<sql_types::Text>)]
+    comment: Option<String>,
+}
 
 pub fn get_table_data(
     conn: &mut PgConnection,
     table: &TableName,
     column_sorting: &ColumnSorting,
+    domains_as_custom_types: &[&regex::Regex],
+    kind: SupportedQueryRelationStructures,
 ) -> QueryResult<Vec<ColumnInformation>> {
     use self::information_schema::columns::dsl::*;
 
@@ -89,86 +189,118 @@ pub fn get_table_data(
             column_name,
             udt_name,
             udt_schema.nullable(),
+            domain_name,
+            domain_schema.nullable(),
             __is_nullable,
             character_maximum_length,
             col_description(regclass(table), ordinal_position),
         ))
         .filter(table_name.eq(&table.sql_name))
-        .filter(table_schema.eq(schema_name));
-    match column_sorting {
-        ColumnSorting::OrdinalPosition => query.order(ordinal_position).load(conn),
-        ColumnSorting::Name => query.order(column_name).load(conn),
-    }
-}
+        .filter(table_schema.eq(&*schema_name));
 
-impl<ST> Queryable<ST, Pg> for ColumnInformation
-where
-    (
-        String,
-        String,
-        Option<String>,
-        String,
-        Option<i32>,
-        Option<String>,
-    ): FromStaticSqlRow<ST, Pg>,
-{
-    type Row = (
-        String,
-        String,
-        Option<String>,
-        String,
-        Option<i32>,
-        Option<String>,
-    );
+    let rows: Vec<ColumnRow> = match (kind, column_sorting) {
+        // `information_schema.columns` does not list materialized views
+        (SupportedQueryRelationStructures::MaterializedView, _) => {
+            diesel::sql_query(include_str!("load_materialized_view_columns.sql"))
+                .bind::<sql_types::Text, _>(&table.sql_name)
+                .bind::<sql_types::Text, _>(&*schema_name)
+                .bind::<sql_types::Bool, _>(matches!(column_sorting, ColumnSorting::Name))
+                .load(conn)
+        }
+        (_, ColumnSorting::OrdinalPosition) => query.order(ordinal_position).load(conn),
+        (_, ColumnSorting::Name) => query.order(column_name).load(conn),
+    }?;
 
-    fn build(row: Self::Row) -> deserialize::Result<Self> {
-        Ok(ColumnInformation::new(
-            row.0,
-            row.1,
-            row.2,
-            row.3 == "YES",
-            row.4
+    rows.into_iter()
+        .map(|row| {
+            let (type_name, type_schema) = row
+                .domain_name
+                .filter(|name| {
+                    domains_as_custom_types
+                        .iter()
+                        .any(|regex| regex.is_match(name))
+                })
+                .map(|name| (name, row.domain_schema))
+                .unwrap_or((row.type_name, row.type_schema));
+
+            let max_length = row
+                .max_length
                 .map(|n| {
-                    std::convert::TryInto::try_into(n).map_err(|e| {
-                        format!("Max column length can't be converted to u64: {e} (got: {n})")
+                    n.try_into().map_err(|e| {
+                        diesel::result::Error::DeserializationError(
+                            format!("Max column length can't be converted to u64: {e} (got: {n})")
+                                .into(),
+                        )
                     })
                 })
-                .transpose()?,
-            row.5,
-        ))
-    }
+                .transpose()?;
+
+            Ok(ColumnInformation::new(
+                row.column_name,
+                type_name,
+                type_schema,
+                row.nullable == "YES",
+                max_length,
+                row.comment,
+                false,
+            ))
+        })
+        .collect()
 }
 
-define_sql_function!(fn obj_description(oid: sql_types::Oid, catalog: sql_types::Text) -> Nullable<Text>);
+pub fn load_table_names(
+    conn: &mut PgConnection,
+    schema_name: Option<&str>,
+) -> Result<Vec<(SupportedQueryRelationStructures, TableName)>, crate::errors::Error> {
+    let mut tables = super::information_schema::load_table_names(conn, schema_name)?;
+    tables.extend(load_materialized_view_names(conn, schema_name)?);
+    tables.sort_by(|(_, a), (_, b)| a.sql_name.cmp(&b.sql_name));
+    Ok(tables)
+}
+
+fn load_materialized_view_names(
+    conn: &mut PgConnection,
+    schema_name: Option<&str>,
+) -> QueryResult<Vec<(SupportedQueryRelationStructures, TableName)>> {
+    let default_schema = Pg::default_schema(conn)?;
+    let schema_name = schema_name.unwrap_or(&default_schema);
+
+    let names = pg_matviews::table
+        .select(pg_matviews::matviewname)
+        .filter(pg_matviews::schemaname.eq(schema_name))
+        .load::<String>(conn)?;
+
+    Ok(names
+        .into_iter()
+        .map(|name| {
+            let mut table = TableName::new(name, schema_name);
+            table.strip_schema_if_matches(&default_schema);
+            (SupportedQueryRelationStructures::MaterializedView, table)
+        })
+        .collect())
+}
+
+pub fn load_materialized_view_sql_definition(
+    conn: &mut PgConnection,
+    view: &TableName,
+) -> QueryResult<String> {
+    let schema_name = match view.schema {
+        Some(ref name) => Cow::Borrowed(name),
+        None => Cow::Owned(Pg::default_schema(conn)?),
+    };
+
+    pg_matviews::table
+        .select(pg_matviews::definition)
+        .filter(pg_matviews::matviewname.eq(&view.sql_name))
+        .filter(pg_matviews::schemaname.eq(schema_name))
+        .get_result(conn)
+}
 
 pub fn get_table_comment(
     conn: &mut PgConnection,
     table: &TableName,
 ) -> QueryResult<Option<String>> {
     diesel::select(obj_description(regclass(table), "pg_class")).get_result(conn)
-}
-
-mod information_schema {
-    use diesel::prelude::table;
-
-    table! {
-        information_schema.columns (table_schema, table_name, column_name) {
-            table_schema -> VarChar,
-            table_name -> VarChar,
-            column_name -> VarChar,
-            #[sql_name = "is_nullable"]
-            __is_nullable -> VarChar,
-            character_maximum_length -> Nullable<Integer>,
-            ordinal_position -> BigInt,
-            udt_name -> VarChar,
-            udt_schema -> VarChar,
-        }
-    }
-}
-
-define_sql_function! {
-    #[aggregate]
-    fn array_agg(input: diesel::sql_types::Text) -> diesel::sql_types::Array<diesel::sql_types::Text>;
 }
 
 #[allow(clippy::similar_names)]
@@ -178,17 +310,17 @@ pub fn load_foreign_key_constraints(
 ) -> QueryResult<Vec<ForeignKeyConstraint>> {
     #[derive(QueryableByName)]
     struct ForeignKeyList {
-        #[diesel(sql_type = Text)]
+        #[diesel(sql_type = sql_types::Text)]
         self_schema: String,
-        #[diesel(sql_type = Text)]
+        #[diesel(sql_type = sql_types::Text)]
         self_table: String,
-        #[diesel(sql_type = Array<Text>)]
+        #[diesel(sql_type = sql_types::Array<sql_types::Text>)]
         self_columns: Vec<String>,
-        #[diesel(sql_type = Text)]
+        #[diesel(sql_type = sql_types::Text)]
         foreign_schema: String,
-        #[diesel(sql_type = Text)]
+        #[diesel(sql_type = sql_types::Text)]
         foreign_table: String,
-        #[diesel(sql_type = Array<Text>)]
+        #[diesel(sql_type = sql_types::Array<sql_types::Text>)]
         foreign_columns: Vec<String>,
     }
 
@@ -196,7 +328,7 @@ pub fn load_foreign_key_constraints(
     let schema_name = schema_name.unwrap_or(&default_schema);
 
     diesel::sql_query(include_str!("load_foreign_keys.sql"))
-        .bind::<Text, _>(schema_name)
+        .bind::<sql_types::Text, _>(schema_name)
         .load_iter::<ForeignKeyList, DefaultLoadingMode>(connection)?
         .map(|f| {
             let f = f?;
@@ -208,7 +340,13 @@ pub fn load_foreign_key_constraints(
             let foreign_key_columns_rust = f
                 .self_columns
                 .iter()
-                .map(|s| super::inference::rust_name_for_sql_name(s))
+                .map(|s| {
+                    super::inference::rust_name_for_sql_name(
+                        s,
+                        super::inference::IdentifierKind::Column,
+                        Some(&child_table),
+                    )
+                })
                 .collect();
             Ok(ForeignKeyConstraint {
                 child_table,
@@ -219,6 +357,46 @@ pub fn load_foreign_key_constraints(
             })
         })
         .collect()
+}
+
+pub fn load_enum_variants(
+    conn: &mut PgConnection,
+    enum_name: &str,
+    schema_name: Option<&str>,
+) -> QueryResult<Option<Vec<EnumVariant>>> {
+    let default_schema = Pg::default_schema(conn)?;
+
+    let r = pg_enum::table
+        .select((
+            pg_enum::enumsortorder.cast::<diesel::sql_types::Integer>(),
+            pg_enum::enumlabel,
+        ))
+        .filter(
+            pg_enum::enumtypid.nullable().eq(pg_type::table
+                .select(pg_type::oid)
+                .filter(pg_type::typname.eq(enum_name))
+                .filter(
+                    pg_type::typnamespace.eq(regnamespace(schema_name.unwrap_or(&default_schema))),
+                )
+                .single_value()),
+        )
+        .order_by(pg_enum::enumsortorder)
+        .load::<EnumVariant>(conn)?;
+    if r.is_empty() { Ok(None) } else { Ok(Some(r)) }
+}
+
+pub fn get_type_comment(
+    conn: &mut PgConnection,
+    type_name: &str,
+    schema_name: Option<&str>,
+) -> QueryResult<Option<String>> {
+    let default_schema = Pg::default_schema(conn)?;
+
+    pg_type::table
+        .select(obj_description(pg_type::oid, "pg_type"))
+        .filter(pg_type::typname.eq(type_name))
+        .filter(pg_type::typnamespace.eq(regnamespace(schema_name.unwrap_or(&default_schema))))
+        .get_result::<Option<String>>(conn)
 }
 
 #[cfg(test)]
@@ -268,6 +446,7 @@ mod test {
             false,
             None,
             Some("column comment".to_string()),
+            false,
         );
         let text_col = ColumnInformation::new(
             "text_col",
@@ -276,18 +455,45 @@ mod test {
             true,
             Some(128),
             None,
+            false,
         );
-        let not_null =
-            ColumnInformation::new("not_null", "text", pg_catalog.clone(), false, None, None);
-        let array_col =
-            ColumnInformation::new("array_col", "_varchar", pg_catalog, false, None, None);
+        let not_null = ColumnInformation::new(
+            "not_null",
+            "text",
+            pg_catalog.clone(),
+            false,
+            None,
+            None,
+            false,
+        );
+        let array_col = ColumnInformation::new(
+            "array_col",
+            "_varchar",
+            pg_catalog,
+            false,
+            None,
+            None,
+            false,
+        );
         assert_eq!(
             Ok(vec![id, text_col, not_null]),
-            get_table_data(&mut connection, &table_1, &ColumnSorting::OrdinalPosition)
+            get_table_data(
+                &mut connection,
+                &table_1,
+                &ColumnSorting::OrdinalPosition,
+                &[],
+                SupportedQueryRelationStructures::Table,
+            )
         );
         assert_eq!(
             Ok(vec![array_col]),
-            get_table_data(&mut connection, &table_2, &ColumnSorting::OrdinalPosition)
+            get_table_data(
+                &mut connection,
+                &table_2,
+                &ColumnSorting::OrdinalPosition,
+                &[],
+                SupportedQueryRelationStructures::Table,
+            )
         );
     }
 
@@ -316,6 +522,47 @@ mod test {
             get_table_comment(&mut connection, &table_1)
         );
         assert_eq!(Ok(None), get_table_comment(&mut connection, &table_2));
+    }
+
+    #[test]
+    fn gets_type_comment() {
+        let mut connection = connection();
+
+        diesel::sql_query("CREATE SCHEMA test_schema")
+            .execute(&mut connection)
+            .unwrap();
+        diesel::sql_query("CREATE TYPE commented_enum AS ENUM ('a', 'b')")
+            .execute(&mut connection)
+            .unwrap();
+        diesel::sql_query("COMMENT ON TYPE commented_enum IS 'enum comment'")
+            .execute(&mut connection)
+            .unwrap();
+        diesel::sql_query("CREATE TYPE test_schema.commented_enum AS ENUM ('c')")
+            .execute(&mut connection)
+            .unwrap();
+        diesel::sql_query("COMMENT ON TYPE test_schema.commented_enum IS 'schema enum comment'")
+            .execute(&mut connection)
+            .unwrap();
+        diesel::sql_query("CREATE TYPE uncommented_enum AS ENUM ('d')")
+            .execute(&mut connection)
+            .unwrap();
+
+        assert_eq!(
+            Ok(Some("enum comment".to_string())),
+            get_type_comment(&mut connection, "commented_enum", None)
+        );
+        assert_eq!(
+            Ok(Some("schema enum comment".to_string())),
+            get_type_comment(&mut connection, "commented_enum", Some("test_schema"))
+        );
+        assert_eq!(
+            Ok(None),
+            get_type_comment(&mut connection, "uncommented_enum", None)
+        );
+        assert_eq!(
+            Err(diesel::result::Error::NotFound),
+            get_type_comment(&mut connection, "non_existing", None)
+        );
     }
 
     #[test]
@@ -408,5 +655,149 @@ mod test {
             Ok(vec![fk_one, fk_two]),
             load_foreign_key_constraints(&mut connection, Some("test_schema"))
         );
+    }
+
+    #[test]
+    fn get_table_data_for_materialized_view_matches_view() {
+        let mut connection = connection();
+
+        for statement in [
+            "CREATE SCHEMA test_schema",
+            "CREATE DOMAIN test_schema.posinteger AS integer NOT NULL CHECK (VALUE > 0)",
+            "CREATE TABLE test_schema.source (id test_schema.posinteger, name VARCHAR, tags TEXT[])",
+            "CREATE VIEW test_schema.v AS SELECT * FROM test_schema.source",
+            "CREATE MATERIALIZED VIEW test_schema.mv AS SELECT * FROM test_schema.source",
+            "COMMENT ON COLUMN test_schema.v.name IS 'the name'",
+            "COMMENT ON COLUMN test_schema.mv.name IS 'the name'",
+        ] {
+            diesel::sql_query(statement)
+                .execute(&mut connection)
+                .unwrap();
+        }
+
+        let view = TableName::new("v", "test_schema");
+        let materialized_view = TableName::new("mv", "test_schema");
+        let domain_regex = "posinteger".try_into().unwrap();
+
+        for sorting in [ColumnSorting::OrdinalPosition, ColumnSorting::Name] {
+            for domains in [&[][..], &[&domain_regex]] {
+                let expected = get_table_data(
+                    &mut connection,
+                    &view,
+                    &sorting,
+                    domains,
+                    SupportedQueryRelationStructures::View,
+                )
+                .unwrap();
+                let actual = get_table_data(
+                    &mut connection,
+                    &materialized_view,
+                    &sorting,
+                    domains,
+                    SupportedQueryRelationStructures::MaterializedView,
+                )
+                .unwrap();
+                assert_eq!(expected, actual);
+            }
+        }
+    }
+
+    #[test]
+    fn get_table_data_considers_domain_types() {
+        let mut connection = connection();
+
+        diesel::sql_query("CREATE SCHEMA test_schema")
+            .execute(&mut connection)
+            .unwrap();
+
+        diesel::sql_query("CREATE DOMAIN posinteger AS integer CHECK (VALUE > 0)")
+            .execute(&mut connection)
+            .unwrap();
+
+        diesel::sql_query("CREATE TABLE test_schema.table_1 (id posinteger PRIMARY KEY)")
+            .execute(&mut connection)
+            .unwrap();
+
+        let table_1 = TableName::new("table_1", "test_schema");
+
+        let id_int = ColumnInformation::new(
+            "id",
+            "int4",
+            Some(String::from("pg_catalog")),
+            false,
+            None,
+            None,
+            false,
+        );
+        let id_domain = ColumnInformation::new(
+            "id",
+            "posinteger",
+            Some(String::from("public")),
+            false,
+            None,
+            None,
+            false,
+        );
+
+        assert_eq!(
+            Ok(vec![id_int.clone()]),
+            get_table_data(
+                &mut connection,
+                &table_1,
+                &ColumnSorting::OrdinalPosition,
+                &[],
+                SupportedQueryRelationStructures::Table,
+            )
+        );
+
+        assert_eq!(
+            Ok(vec![id_int.clone()]),
+            get_table_data(
+                &mut connection,
+                &table_1,
+                &ColumnSorting::OrdinalPosition,
+                &[&"non-matching-regex".try_into().unwrap()],
+                SupportedQueryRelationStructures::Table,
+            )
+        );
+
+        assert_eq!(
+            Ok(vec![id_domain]),
+            get_table_data(
+                &mut connection,
+                &table_1,
+                &ColumnSorting::OrdinalPosition,
+                &[&"int".try_into().unwrap()],
+                SupportedQueryRelationStructures::Table,
+            )
+        );
+    }
+
+    #[test]
+    fn load_enum_variants() {
+        let mut connection = connection();
+
+        diesel::sql_query("CREATE TYPE test AS ENUM ('A', 'B')")
+            .execute(&mut connection)
+            .unwrap();
+
+        let variants = super::load_enum_variants(&mut connection, "test", None).unwrap();
+        assert!(variants.is_some());
+        assert_eq!(
+            variants.unwrap(),
+            [
+                EnumVariant {
+                    order: 1,
+                    sql_name: "A".into()
+                },
+                EnumVariant {
+                    order: 2,
+                    sql_name: "B".into()
+                }
+            ]
+        );
+
+        let variants = super::load_enum_variants(&mut connection, "non_existing", None).unwrap();
+        assert!(variants.is_none());
     }
 }

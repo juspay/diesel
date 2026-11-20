@@ -1,6 +1,6 @@
-use std::ops::Add;
+use core::ops::Add;
 
-use crate::deserialize::{self, FromSql, FromSqlRow};
+use crate::deserialize::{self, Defaultable, FromSql, FromSqlRow};
 use crate::expression::AsExpression;
 use crate::pg::{Pg, PgValue};
 use crate::serialize::{self, IsNull, Output, ToSql};
@@ -15,7 +15,7 @@ mod std_time;
 mod time;
 
 #[cfg(feature = "postgres_backend")]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, AsExpression, FromSqlRow)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, AsExpression, FromSqlRow)]
 #[diesel(sql_type = Timestamp)]
 #[diesel(sql_type = Timestamptz)]
 /// Timestamps are represented in Postgres as a 64 bit signed integer representing the number of
@@ -23,28 +23,46 @@ mod time;
 /// the integer's meaning.
 pub struct PgTimestamp(pub i64);
 
+impl Defaultable for PgTimestamp {
+    fn default_value() -> Self {
+        PgTimestamp(0)
+    }
+}
+
 #[cfg(feature = "postgres_backend")]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, AsExpression, FromSqlRow)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, AsExpression, FromSqlRow)]
 #[diesel(sql_type = Date)]
 /// Dates are represented in Postgres as a 32 bit signed integer representing the number of julian
 /// days since January 1st 2000. This struct is a dumb wrapper type, meant only to indicate the
 /// integer's meaning.
 pub struct PgDate(pub i32);
 
+impl Defaultable for PgDate {
+    fn default_value() -> Self {
+        PgDate(0)
+    }
+}
+
 /// Time is represented in Postgres as a 64 bit signed integer representing the number of
 /// microseconds since midnight. This struct is a dumb wrapper type, meant only to indicate the
 /// integer's meaning.
 #[cfg(feature = "postgres_backend")]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, AsExpression, FromSqlRow)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, AsExpression, FromSqlRow)]
 #[diesel(sql_type = Time)]
 pub struct PgTime(pub i64);
+
+impl Defaultable for PgTime {
+    fn default_value() -> Self {
+        PgTime(0)
+    }
+}
 
 /// Intervals in Postgres are separated into 3 parts. A 64 bit integer representing time in
 /// microseconds, a 32 bit integer representing number of days, and a 32 bit integer
 /// representing number of months. This struct is a dumb wrapper type, meant only to indicate the
 /// meaning of these parts.
 #[cfg(feature = "postgres_backend")]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, AsExpression, FromSqlRow)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, AsExpression, FromSqlRow)]
 #[diesel(sql_type = Interval)]
 pub struct PgInterval {
     /// The number of whole microseconds
@@ -62,7 +80,7 @@ impl PgInterval {
     /// of microseconds greater than the longest possible day, or a number of
     /// days greater than the longest possible month, as it is impossible to say
     /// how many months are in "40 days" without knowing a precise date.
-    pub fn new(microseconds: i64, days: i32, months: i32) -> Self {
+    pub const fn new(microseconds: i64, days: i32, months: i32) -> Self {
         PgInterval {
             microseconds,
             days,
@@ -71,17 +89,17 @@ impl PgInterval {
     }
 
     /// Equivalent to `new(microseconds, 0, 0)`
-    pub fn from_microseconds(microseconds: i64) -> Self {
+    pub const fn from_microseconds(microseconds: i64) -> Self {
         Self::new(microseconds, 0, 0)
     }
 
     /// Equivalent to `new(0, days, 0)`
-    pub fn from_days(days: i32) -> Self {
+    pub const fn from_days(days: i32) -> Self {
         Self::new(0, days, 0)
     }
 
     /// Equivalent to `new(0, 0, months)`
-    pub fn from_months(months: i32) -> Self {
+    pub const fn from_months(months: i32) -> Self {
         Self::new(0, 0, months)
     }
 }
@@ -156,9 +174,9 @@ impl ToSql<sql_types::Interval, Pg> for PgInterval {
 impl FromSql<sql_types::Interval, Pg> for PgInterval {
     fn from_sql(value: PgValue<'_>) -> deserialize::Result<Self> {
         Ok(PgInterval {
-            microseconds: FromSql::<sql_types::BigInt, Pg>::from_sql(value.subslice(0..8))?,
-            days: FromSql::<sql_types::Integer, Pg>::from_sql(value.subslice(8..12))?,
-            months: FromSql::<sql_types::Integer, Pg>::from_sql(value.subslice(12..16))?,
+            microseconds: FromSql::<sql_types::BigInt, Pg>::from_sql(value.subslice(0..8)?)?,
+            days: FromSql::<sql_types::Integer, Pg>::from_sql(value.subslice(8..12)?)?,
+            months: FromSql::<sql_types::Integer, Pg>::from_sql(value.subslice(12..16)?)?,
         })
     }
 }
@@ -172,5 +190,18 @@ impl Add<PgInterval> for PgInterval {
             days: self.days + other.days,
             months: self.months + other.months,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn prevent_panic_on_too_short_buffer() {
+        let bytes: &[u8] = &[0u8; 4];
+        let v = PgValue::for_test(bytes);
+        let r = <PgInterval as FromSql<Interval, Pg>>::from_sql(v);
+        assert!(r.is_err());
     }
 }

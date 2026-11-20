@@ -1,22 +1,15 @@
 use crate::migrations::migration_directory_from_given_path;
-use migrations_internals::{migrations_directories, version_from_string, TomlMetadata};
+use migrations_internals::{TomlMetadata, migrations_directories, version_from_string};
 use quote::quote;
 use std::error::Error;
 use std::fs::DirEntry;
 use std::path::Path;
 
-pub fn expand(path: String) -> proc_macro2::TokenStream {
-    let migrations_path_opt = if path.is_empty() {
-        None
-    } else {
-        Some(path.replace('"', ""))
-    };
+pub fn expand(path: Option<syn::LitStr>) -> proc_macro2::TokenStream {
+    let migrations_path_opt = path.map(|l| l.value());
     let migrations_expr = migration_directory_from_given_path(migrations_path_opt.as_deref())
         .unwrap_or_else(|_| {
-            panic!(
-                "Failed to receive migrations dir from {:?}",
-                migrations_path_opt
-            )
+            panic!("Failed to receive migrations dir from {migrations_path_opt:?}")
         });
     let embedded_migrations =
         migration_literals_from_path(&migrations_expr).expect("Failed to read migration literals");
@@ -42,7 +35,7 @@ fn migration_literals_from_path(
 fn migration_literal_from_path(path: &Path) -> proc_macro2::TokenStream {
     let name = path
         .file_name()
-        .unwrap_or_else(|| panic!("Can't get file name from path `{:?}`", path))
+        .unwrap_or_else(|| panic!("Can't get file name from path `{path:?}`"))
         .to_string_lossy();
     if version_from_string(&name).is_none() {
         panic!(

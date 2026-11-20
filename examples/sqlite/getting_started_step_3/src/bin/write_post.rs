@@ -1,5 +1,6 @@
+#![allow(clippy::print_stdout, reason = "Example code")]
 use getting_started_step_3_sqlite::*;
-use std::io::{stdin, Read};
+use std::io::{Read, stdin};
 
 fn main() {
     let connection = &mut establish_connection();

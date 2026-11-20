@@ -18,7 +18,7 @@ mod delete_statement;
 mod distinct_clause;
 pub(crate) mod from_clause;
 pub(crate) mod functions;
-mod group_by_clause;
+pub(crate) mod group_by_clause;
 mod having_clause;
 pub(crate) mod insert_statement;
 pub(crate) mod limit_clause;
@@ -27,7 +27,6 @@ pub(crate) mod locking_clause;
 pub(crate) mod nodes;
 pub(crate) mod offset_clause;
 pub(crate) mod order_clause;
-pub(crate) mod returning_clause;
 pub(crate) mod select_clause;
 pub(crate) mod select_statement;
 mod sql_query;
@@ -44,7 +43,12 @@ pub use self::collected_query::CollectedQuery;
 #[doc(inline)]
 pub use self::debug_query::DebugQuery;
 #[doc(inline)]
-pub use self::delete_statement::{BoxedDeleteStatement, DeleteStatement};
+pub use self::delete_statement::{
+    BoxedCloneDeleteStatement, BoxedDeleteStatement, DeleteStatement,
+};
+#[cfg(any(feature = "mysql_backend", feature = "mariadb_backend"))]
+#[doc(inline)]
+pub use self::insert_statement::SingleRowInsertValues;
 #[doc(inline)]
 pub use self::insert_statement::{
     IncompleteInsertOrIgnoreStatement, IncompleteInsertStatement, IncompleteReplaceStatement,
@@ -53,7 +57,11 @@ pub use self::insert_statement::{
 #[doc(inline)]
 pub use self::query_id::QueryId;
 #[doc(inline)]
-pub use self::sql_query::{BoxedSqlQuery, SqlQuery};
+pub use self::sql_query::{BoxedCloneSqlQuery, BoxedSqlQuery, SqlQuery};
+#[doc(inline)]
+pub use self::upsert::into_conflict_clause::IntoConflictValueClause;
+#[doc(inline)]
+pub use self::upsert::on_conflict_target::{ConflictTarget, OnConflictTarget};
 #[doc(inline)]
 pub use self::upsert::on_conflict_target_decorations::DecoratableTarget;
 
@@ -62,7 +70,9 @@ pub use self::update_statement::changeset::AsChangeset;
 #[doc(inline)]
 pub use self::update_statement::target::{IntoUpdateTarget, UpdateTarget};
 #[doc(inline)]
-pub use self::update_statement::{BoxedUpdateStatement, UpdateStatement};
+pub use self::update_statement::{
+    BoxedCloneUpdateStatement, BoxedUpdateStatement, UpdateStatement,
+};
 
 #[cfg(feature = "i-implement-a-third-party-backend-and-opt-into-breaking-changes")]
 pub use self::combination_clause::{
@@ -71,7 +81,9 @@ pub use self::combination_clause::{
 #[cfg(feature = "i-implement-a-third-party-backend-and-opt-into-breaking-changes")]
 pub use self::limit_clause::{LimitClause, NoLimitClause};
 #[cfg(feature = "i-implement-a-third-party-backend-and-opt-into-breaking-changes")]
-pub use self::limit_offset_clause::{BoxedLimitOffsetClause, LimitOffsetClause};
+pub use self::limit_offset_clause::{
+    BoxedCloneLimitOffsetClause, BoxedLimitOffsetClause, LimitOffsetClause,
+};
 #[cfg(feature = "i-implement-a-third-party-backend-and-opt-into-breaking-changes")]
 pub use self::offset_clause::{NoOffsetClause, OffsetClause};
 #[cfg(feature = "i-implement-a-third-party-backend-and-opt-into-breaking-changes")]
@@ -91,9 +103,10 @@ pub(crate) use self::insert_statement::{UndecoratedInsertRecord, ValuesClause};
 #[doc(inline)]
 pub use self::insert_statement::{DefaultValues, InsertOrIgnore, Replace};
 
+#[cfg(not(feature = "i-implement-a-third-party-backend-and-opt-into-breaking-changes"))]
+pub(crate) mod returning;
 #[cfg(feature = "i-implement-a-third-party-backend-and-opt-into-breaking-changes")]
-#[doc(inline)]
-pub use self::returning_clause::ReturningClause;
+pub mod returning;
 
 #[doc(inline)]
 #[diesel_derives::__diesel_public_if(
@@ -112,6 +125,20 @@ pub(crate) use self::select_clause::SelectClauseExpression;
     feature = "i-implement-a-third-party-backend-and-opt-into-breaking-changes"
 )]
 pub(crate) use self::from_clause::{FromClause, NoFromClause};
+#[cfg_attr(
+    not(feature = "i-implement-a-third-party-backend-and-opt-into-breaking-changes"),
+    allow(unused_imports)
+)]
+#[diesel_derives::__diesel_public_if(
+    feature = "i-implement-a-third-party-backend-and-opt-into-breaking-changes"
+)]
+#[doc(inline)]
+pub(crate) use self::group_by_clause::{GroupByClause, NoGroupByClause};
+#[diesel_derives::__diesel_public_if(
+    feature = "i-implement-a-third-party-backend-and-opt-into-breaking-changes"
+)]
+#[doc(inline)]
+pub(crate) use self::select_statement::BoxedCloneSelectStatement;
 #[diesel_derives::__diesel_public_if(
     feature = "i-implement-a-third-party-backend-and-opt-into-breaking-changes"
 )]
@@ -132,11 +159,17 @@ pub use crate::pg::query_builder::only::Only;
 #[cfg(feature = "postgres_backend")]
 pub use crate::pg::query_builder::tablesample::{Tablesample, TablesampleMethod};
 
+pub(crate) use self::bind_collector::BindData;
 #[cfg(feature = "postgres_backend")]
 pub(crate) use self::bind_collector::ByteWrapper;
 use crate::backend::Backend;
 use crate::result::QueryResult;
-use std::error::Error;
+use alloc::boxed::Box;
+use alloc::string::String;
+use alloc::vec::Vec;
+use core::error::Error;
+
+pub(crate) use self::private::NotSpecialized;
 
 #[doc(hidden)]
 pub type Binds = Vec<Option<Vec<u8>>>;
@@ -149,7 +182,6 @@ pub type BuildQueryResult = Result<(), Box<dyn Error + Send + Sync>>;
 /// are extending Diesel with support for a new backend. Plugins which extend
 /// the query builder with new capabilities will interact with [`AstPass`]
 /// instead.
-///
 pub trait QueryBuilder<DB: Backend> {
     /// Add `sql` to the end of the query being constructed.
     fn push_sql(&mut self, sql: &str);
@@ -227,8 +259,19 @@ pub trait QueryFragment<DB: Backend, SP = self::private::NotSpecialized> {
     /// This method is where the actual behavior of an AST node is implemented.
     /// This method will contain the behavior required for all possible AST
     /// passes. See [`AstPass`] for more details.
-    ///
     fn walk_ast<'b>(&'b self, pass: AstPass<'_, 'b, DB>) -> QueryResult<()>;
+
+    /// Walk over this `QueryFragment`, qualifying its relation with `schema`.
+    #[doc(hidden)]
+    fn walk_ast_with_schema<'b>(
+        &'b self,
+        schema: &str,
+        mut pass: AstPass<'_, 'b, DB>,
+    ) -> QueryResult<()> {
+        pass.push_identifier(schema)?;
+        pass.push_sql(".");
+        self.walk_ast(pass)
+    }
 
     /// Converts this `QueryFragment` to its SQL representation.
     ///
@@ -292,9 +335,39 @@ pub trait QueryFragment<DB: Backend, SP = self::private::NotSpecialized> {
         self.walk_ast(AstPass::is_noop(&mut result, backend))?;
         Ok(result)
     }
+
+    /// Count the number of binds in a given prepared statement
+    #[diesel_derives::__diesel_public_if(
+        feature = "i-implement-a-third-party-backend-and-opt-into-breaking-changes"
+    )]
+    fn count_binds(&self, backend: &DB) -> QueryResult<usize> {
+        let mut count = 0;
+        self.walk_ast(AstPass::count_binds(&mut count, backend))?;
+        Ok(count)
+    }
 }
 
 impl<T: ?Sized, DB> QueryFragment<DB> for Box<T>
+where
+    DB: Backend,
+    T: QueryFragment<DB>,
+{
+    fn walk_ast<'b>(&'b self, pass: AstPass<'_, 'b, DB>) -> QueryResult<()> {
+        QueryFragment::walk_ast(&**self, pass)
+    }
+}
+
+impl<T: ?Sized, DB> QueryFragment<DB> for alloc::rc::Rc<T>
+where
+    DB: Backend,
+    T: QueryFragment<DB>,
+{
+    fn walk_ast<'b>(&'b self, pass: AstPass<'_, 'b, DB>) -> QueryResult<()> {
+        QueryFragment::walk_ast(&**self, pass)
+    }
+}
+
+impl<T: ?Sized, DB> QueryFragment<DB> for alloc::sync::Arc<T>
 where
     DB: Backend,
     T: QueryFragment<DB>,
@@ -336,12 +409,29 @@ where
 /// A trait used to construct type erased boxed variant of the current query node
 ///
 /// Mainly useful for implementing third party backends
+#[diagnostic::on_unimplemented(
+    note = "this usually means that `{Self}` is no valid SQL for `{DB}`"
+)]
 pub trait IntoBoxedClause<'a, DB> {
     /// Resulting type
     type BoxedClause;
 
     /// Convert the given query node in it's boxed representation
     fn into_boxed(self) -> Self::BoxedClause;
+}
+
+/// A trait used to construct type erased boxed cloneable variant of the current query node
+///
+/// Mainly useful for implementing third party backends
+#[diagnostic::on_unimplemented(
+    note = "this usually means that `{Self}` is no valid SQL for `{DB}`"
+)]
+pub trait IntoBoxedCloneClause<'a, DB> {
+    /// Resulting type
+    type BoxedCloneClause;
+
+    /// Convert the given query node in it's boxed cloneable representation
+    fn into_boxed_clone(self) -> Self::BoxedCloneClause;
 }
 
 /// Types that can be converted into a complete, typed SQL query.
@@ -409,8 +499,11 @@ impl<T: Query> AsQuery for T {
 /// #     assert_eq!(debug.to_string(), "SELECT \"users\".\"id\", \"users\".\"name\" \
 /// #         FROM \"users\" WHERE (\"users\".\"id\" = $1) -- binds: [1]");
 /// # } else {
-/// assert_eq!(debug.to_string(), "SELECT `users`.`id`, `users`.`name` FROM `users` \
-///     WHERE (`users`.`id` = ?) -- binds: [1]");
+/// assert_eq!(
+///     debug.to_string(),
+///     "SELECT `users`.`id`, `users`.`name` FROM `users` \
+///     WHERE (`users`.`id` = ?) -- binds: [1]"
+/// );
 /// # }
 ///
 /// let debug = format!("{:?}", debug);
@@ -432,3 +525,5 @@ mod private {
     #[allow(missing_debug_implementations, missing_copy_implementations)]
     pub struct NotSpecialized;
 }
+
+pub(crate) mod has_query;

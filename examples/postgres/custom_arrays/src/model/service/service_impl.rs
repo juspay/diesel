@@ -1,10 +1,10 @@
+use crate::Connection;
 use crate::model::endpoint_type::Endpoint;
 use crate::model::service::{CreateService, Service, UpdateService};
 use crate::schema::smdb::service::dsl::*;
-use crate::Connection;
 use diesel::{
-    insert_into, ExpressionMethods, OptionalExtension, QueryDsl, QueryResult, RunQueryDsl,
-    SelectableHelper,
+    ExpressionMethods, OptionalExtension, QueryDsl, QueryResult, RunQueryDsl, SelectableHelper,
+    insert_into,
 };
 
 impl Service {
@@ -39,7 +39,7 @@ impl Service {
     ) -> QueryResult<(bool, Option<String>)> {
         for id in services {
             if !Service::check_if_service_id_online(db, *id)? {
-                return Ok((false, Some(format!("Service {} is offline", id))));
+                return Ok((false, Some(format!("Service {id} is offline"))));
             }
         }
 

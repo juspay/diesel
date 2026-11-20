@@ -1,0 +1,45 @@
+---
+source: diesel_derives/src/tests/mod.rs
+expression: out
+info:
+  input: "__diesel_for_each_tuple! {\n    tuple_impls, 16\n}\n"
+---
+tuple_impls! {
+    1u16 { (0) -> T, ST, TT, } 2u16 { (0) -> T, ST, TT, (1) -> T1, ST1, TT1, } 3u16 { (0)
+    -> T, ST, TT, (1) -> T1, ST1, TT1, (2) -> T2, ST2, TT2, } 4u16 { (0) -> T, ST, TT,
+    (1) -> T1, ST1, TT1, (2) -> T2, ST2, TT2, (3) -> T3, ST3, TT3, } 5u16 { (0) -> T, ST,
+    TT, (1) -> T1, ST1, TT1, (2) -> T2, ST2, TT2, (3) -> T3, ST3, TT3, (4) -> T4, ST4,
+    TT4, } 6u16 { (0) -> T, ST, TT, (1) -> T1, ST1, TT1, (2) -> T2, ST2, TT2, (3) -> T3,
+    ST3, TT3, (4) -> T4, ST4, TT4, (5) -> T5, ST5, TT5, } 7u16 { (0) -> T, ST, TT, (1) ->
+    T1, ST1, TT1, (2) -> T2, ST2, TT2, (3) -> T3, ST3, TT3, (4) -> T4, ST4, TT4, (5) ->
+    T5, ST5, TT5, (6) -> T6, ST6, TT6, } 8u16 { (0) -> T, ST, TT, (1) -> T1, ST1, TT1,
+    (2) -> T2, ST2, TT2, (3) -> T3, ST3, TT3, (4) -> T4, ST4, TT4, (5) -> T5, ST5, TT5,
+    (6) -> T6, ST6, TT6, (7) -> T7, ST7, TT7, } 9u16 { (0) -> T, ST, TT, (1) -> T1, ST1,
+    TT1, (2) -> T2, ST2, TT2, (3) -> T3, ST3, TT3, (4) -> T4, ST4, TT4, (5) -> T5, ST5,
+    TT5, (6) -> T6, ST6, TT6, (7) -> T7, ST7, TT7, (8) -> T8, ST8, TT8, } 10u16 { (0) ->
+    T, ST, TT, (1) -> T1, ST1, TT1, (2) -> T2, ST2, TT2, (3) -> T3, ST3, TT3, (4) -> T4,
+    ST4, TT4, (5) -> T5, ST5, TT5, (6) -> T6, ST6, TT6, (7) -> T7, ST7, TT7, (8) -> T8,
+    ST8, TT8, (9) -> T9, ST9, TT9, } 11u16 { (0) -> T, ST, TT, (1) -> T1, ST1, TT1, (2)
+    -> T2, ST2, TT2, (3) -> T3, ST3, TT3, (4) -> T4, ST4, TT4, (5) -> T5, ST5, TT5, (6)
+    -> T6, ST6, TT6, (7) -> T7, ST7, TT7, (8) -> T8, ST8, TT8, (9) -> T9, ST9, TT9, (10)
+    -> T10, ST10, TT10, } 12u16 { (0) -> T, ST, TT, (1) -> T1, ST1, TT1, (2) -> T2, ST2,
+    TT2, (3) -> T3, ST3, TT3, (4) -> T4, ST4, TT4, (5) -> T5, ST5, TT5, (6) -> T6, ST6,
+    TT6, (7) -> T7, ST7, TT7, (8) -> T8, ST8, TT8, (9) -> T9, ST9, TT9, (10) -> T10,
+    ST10, TT10, (11) -> T11, ST11, TT11, } 13u16 { (0) -> T, ST, TT, (1) -> T1, ST1, TT1,
+    (2) -> T2, ST2, TT2, (3) -> T3, ST3, TT3, (4) -> T4, ST4, TT4, (5) -> T5, ST5, TT5,
+    (6) -> T6, ST6, TT6, (7) -> T7, ST7, TT7, (8) -> T8, ST8, TT8, (9) -> T9, ST9, TT9,
+    (10) -> T10, ST10, TT10, (11) -> T11, ST11, TT11, (12) -> T12, ST12, TT12, } 14u16 {
+    (0) -> T, ST, TT, (1) -> T1, ST1, TT1, (2) -> T2, ST2, TT2, (3) -> T3, ST3, TT3, (4)
+    -> T4, ST4, TT4, (5) -> T5, ST5, TT5, (6) -> T6, ST6, TT6, (7) -> T7, ST7, TT7, (8)
+    -> T8, ST8, TT8, (9) -> T9, ST9, TT9, (10) -> T10, ST10, TT10, (11) -> T11, ST11,
+    TT11, (12) -> T12, ST12, TT12, (13) -> T13, ST13, TT13, } 15u16 { (0) -> T, ST, TT,
+    (1) -> T1, ST1, TT1, (2) -> T2, ST2, TT2, (3) -> T3, ST3, TT3, (4) -> T4, ST4, TT4,
+    (5) -> T5, ST5, TT5, (6) -> T6, ST6, TT6, (7) -> T7, ST7, TT7, (8) -> T8, ST8, TT8,
+    (9) -> T9, ST9, TT9, (10) -> T10, ST10, TT10, (11) -> T11, ST11, TT11, (12) -> T12,
+    ST12, TT12, (13) -> T13, ST13, TT13, (14) -> T14, ST14, TT14, } 16u16 { (0) -> T, ST,
+    TT, (1) -> T1, ST1, TT1, (2) -> T2, ST2, TT2, (3) -> T3, ST3, TT3, (4) -> T4, ST4,
+    TT4, (5) -> T5, ST5, TT5, (6) -> T6, ST6, TT6, (7) -> T7, ST7, TT7, (8) -> T8, ST8,
+    TT8, (9) -> T9, ST9, TT9, (10) -> T10, ST10, TT10, (11) -> T11, ST11, TT11, (12) ->
+    T12, ST12, TT12, (13) -> T13, ST13, TT13, (14) -> T14, ST14, TT14, (15) -> T15, ST15,
+    TT15, }
+}

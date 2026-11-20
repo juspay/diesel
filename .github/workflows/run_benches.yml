@@ -3,9 +3,14 @@ on:
     types: [labeled, opened, reopened, synchronize]
 
 name: Run and Cache Benchmarks
-
+permissions:
+  contents: "read"
+concurrency:
+  group: ${{ github.ref }}-${{ github.workflow }}
+  cancel-in-progress: true
 jobs:
   run_benchmarks:
+    name: Run Benchmarks
     if: github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'run-benchmarks')
     runs-on: ubuntu-latest
     strategy:
@@ -14,7 +19,9 @@ jobs:
         backend: ["postgres", "sqlite", "mysql"]
     steps:
       - name: Checkout sources
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6.0.1
+        with:
+          persist-credentials: false
 
       - name: Install postgres (Linux)
         if: matrix.backend == 'postgres'
@@ -49,54 +56,76 @@ jobs:
       - name: Install mysql (Linux)
         if: matrix.backend == 'mysql'
         run: |
-          sudo systemctl start mysql.service
           sudo apt-get update
-          sudo apt-get -y install libmysqlclient-dev
+          sudo apt-get install -y libtirpc-dev libmysqlclient-dev
+          sudo systemctl start mysql.service
           mysql -e "create database diesel_test; create database diesel_unit_test; grant all on \`diesel_%\`.* to 'root'@'localhost';" -uroot -proot
-          echo 'DATABASE_URL=mysql://root:root@localhost/diesel_test' >> $GITHUB_ENV
+          echo "MYSQL_DATABASE_URL=mysql://root:root@127.0.0.1/diesel_test" >> $GITHUB_ENV
 
       - name: Install rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        run: |
+          rustup update stable
 
       - name: Install critcmp
         run: cargo +stable install critcmp
 
       - name: Benchmark PR ${{ matrix.backend }}
-        run: cargo +stable bench --manifest-path diesel_bench/Cargo.toml --no-default-features --features "${{ matrix.backend }}" -- --save-baseline changes > pr_${{ matrix.backend }}.txt
+        env:
+          BACKEND: ${{ matrix.backend }}
+        run: cargo +stable bench --manifest-path diesel_bench/Cargo.toml --no-default-features --features "$BACKEND" -- --save-baseline changes > pr_$BACKEND.txt
 
       - name: Upload PR ${{ matrix.backend }} Benchmark Results
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6.0.0
         with:
           name: pr_${{ matrix.backend }}.txt
           path: ./pr_${{ matrix.backend }}.txt
 
+      - name: Copy results
+        run: |
+          mv diesel_bench/target/criterion /tmp
+
       - name: Checkout base branch
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6.0.1
         with:
           ref: ${{ github.event.pull_request.base.sha }}
           repository: ${{ github.event.pull_request.base.repo.full_name }}
+          persist-credentials: false
+
+      - name: Copy results back
+        run: |
+          mkdir diesel_bench/target -p
+          mv /tmp/criterion diesel_bench/target/criterion
 
       - name: Benchmark base ${{ matrix.backend }}
-        run: cargo +stable bench --manifest-path diesel_bench/Cargo.toml --no-default-features --features "${{ matrix.backend }}" -- --save-baseline master > base_${{ matrix.backend }}.txt
+        env:
+          BACKEND: ${{ matrix.backend }}
+        run: cargo +stable bench --manifest-path diesel_bench/Cargo.toml --no-default-features --features "$BACKEND" -- --save-baseline main > base_$BACKEND.txt
 
       - name: Upload base ${{ matrix.backend }} Benchmark Results
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6.0.0
+        env:
+          BACKEND: ${{ matrix.backend }}
         with:
-          name: base_${{ matrix.backend }}.txt
-          path: ./base_${{ matrix.backend }}.txt
+          name: base_$BACKEND.txt
+          path: ./base_$BACKEND.txt
 
       - name: Upload GitHub Event
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6.0.0
+        env:
+          BACKEND: ${{ matrix.backend }}
         with:
-          name: event_${{ matrix.backend }}.json
+          name: event_$BACKEND.json
           path: ${{ github.event_path }}
 
       - name: Critcmp
+        env:
+          BACKEND: ${{ matrix.backend }}
         run: |
           cd diesel_bench
-          critcmp master changes
-          echo "# ${{matrix.backend}}" >> $GITHUB_STEP_SUMMARY
+          critcmp --baselines
+          critcmp main change
+          echo "# $BACKEND" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo '```' >> $GITHUB_STEP_SUMMARY
-          critcmp master changes >> $GITHUB_STEP_SUMMARY
+          critcmp main changes >> $GITHUB_STEP_SUMMARY
           echo '```' >> $GITHUB_STEP_SUMMARY

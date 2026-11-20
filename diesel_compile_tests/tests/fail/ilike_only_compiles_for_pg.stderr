@@ -1,49 +1,80 @@
-error[E0277]: `diesel::pg::expression::operators::ILike<columns::name, diesel::expression::bound::Bound<diesel::sql_types::Text, &str>>` is no valid SQL fragment for the `Sqlite` backend
-  --> tests/fail/ilike_only_compiles_for_pg.rs:21:61
-   |
-21 |     users::table.filter(users::name.ilike("%hey%")).execute(&mut connection);
-   |                                                     ------- ^^^^^^^^^^^^^^^ the trait `QueryFragment<Sqlite>` is not implemented for `diesel::pg::expression::operators::ILike<columns::name, diesel::expression::bound::Bound<diesel::sql_types::Text, &str>>`, which is required by `SelectStatement<FromClause<users::table>, diesel::query_builder::select_clause::DefaultSelectClause<FromClause<users::table>>, diesel::query_builder::distinct_clause::NoDistinctClause, diesel::query_builder::where_clause::WhereClause<diesel::expression::grouped::Grouped<diesel::pg::expression::operators::ILike<columns::name, diesel::expression::bound::Bound<diesel::sql_types::Text, &str>>>>>: ExecuteDsl<_, _>`
-   |                                                     |
-   |                                                     required by a bound introduced by this call
-   |
-   = note: this usually means that the `Sqlite` database system does not support
-           this SQL syntax
-   = help: the trait `QueryFragment<Pg>` is implemented for `diesel::pg::expression::operators::ILike<columns::name, diesel::expression::bound::Bound<diesel::sql_types::Text, &str>>`
-   = help: for that trait implementation, expected `Pg`, found `Sqlite`
-   = note: required for `diesel::expression::grouped::Grouped<diesel::pg::expression::operators::ILike<columns::name, diesel::expression::bound::Bound<diesel::sql_types::Text, &str>>>` to implement `QueryFragment<Sqlite>`
-   = note: 3 redundant requirements hidden
-   = note: required for `SelectStatement<FromClause<users::table>, diesel::query_builder::select_clause::DefaultSelectClause<FromClause<users::table>>, diesel::query_builder::distinct_clause::NoDistinctClause, diesel::query_builder::where_clause::WhereClause<diesel::expression::grouped::Grouped<diesel::pg::expression::operators::ILike<columns::name, diesel::expression::bound::Bound<diesel::sql_types::Text, &str>>>>>` to implement `QueryFragment<Sqlite>`
-   = note: required for `SelectStatement<FromClause<users::table>, diesel::query_builder::select_clause::DefaultSelectClause<FromClause<users::table>>, diesel::query_builder::distinct_clause::NoDistinctClause, diesel::query_builder::where_clause::WhereClause<diesel::expression::grouped::Grouped<diesel::pg::expression::operators::ILike<columns::name, diesel::expression::bound::Bound<diesel::sql_types::Text, &str>>>>>` to implement `ExecuteDsl<diesel::SqliteConnection, Sqlite>`
+error[E0277]: `ILike<name, Bound<Text, &str>>` is no valid SQL fragment for the `Sqlite` backend
+    --> tests/fail/ilike_only_compiles_for_pg.rs:23:18
+     |
+  LL |         .execute(&mut connection);
+     |          ------- ^^^^^^^^^^^^^^^ the trait `QueryFragment<Sqlite>` is not implemented for `ILike<name, Bound<Text, &str>>`
+     |          |
+     |          required by a bound introduced by this call
+     |
+     = note: this usually means that the `Sqlite` database system does not support 
+             this SQL syntax
+help: the trait `QueryFragment<Sqlite, NotSpecialized>` is not implemented for `ILike<name, Bound<Text, &str>>`
+      but trait `QueryFragment<Pg, NotSpecialized>` is implemented for it
+    --> ROOT/diesel/src/expression/operators.rs
+     |
+  LL | / ...   impl<$($ty_param,)+ $($backend_ty_param,)*> $crate::query_builder::QueryFragment<$...
+  LL | | ...       for $name<$($ty_param,)+> where
+  LL | | ...           $($ty_param: $crate::query_builder::QueryFragment<$backend_ty>,)+
+     | |_____________________________________________________________________________^
+     |
+    ::: ROOT/diesel/src/pg/expression/operators.rs
+     |
+  LL |   infix_operator!(ILike, " ILIKE ", backend: Pg);
+     |   ---------------------------------------------- in this macro invocation
+     = help: for that trait implementation, expected `Pg`, found `Sqlite`
+     = note: required for `Grouped<ILike<name, Bound<Text, &str>>>` to implement `QueryFragment<Sqlite>`
+     = note: 3 redundant requirements hidden
+     = note: required for `SelectStatement<FromClause<table>, _, _, _>` to implement `QueryFragment<Sqlite>`
+     = note: required for `SelectStatement<FromClause<table>, _, _, _>` to implement `ExecuteDsl<diesel::SqliteConnection, Sqlite>`
 note: required by a bound in `diesel::RunQueryDsl::execute`
-  --> $DIESEL/src/query_dsl/mod.rs
-   |
-   |     fn execute(self, conn: &mut Conn) -> QueryResult<usize>
-   |        ------- required by a bound in this associated function
+    --> ROOT/diesel/src/query_dsl/mod.rs
+     |
+LL | pub trait RunQueryDsl<Conn>: Sized {
 ...
-   |         Self: methods::ExecuteDsl<Conn>,
-   |               ^^^^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `RunQueryDsl::execute`
+LL |     fn execute(self, conn: &mut Conn) -> QueryResult<usize>
+...
+LL |         Self: methods::ExecuteDsl<Conn>,
+     |               ^^^^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `RunQueryDsl::execute`
+  
+          = note: this error originates in the macro `$crate::__diesel_operator_body` which comes from the expansion of the macro `infix_operator` (in Nightly builds, run with -Z macro-backtrace for more info)
 
-error[E0277]: `diesel::pg::expression::operators::ILike<columns::name, diesel::expression::bound::Bound<diesel::sql_types::Text, &str>>` is no valid SQL fragment for the `Mysql` backend
-  --> tests/fail/ilike_only_compiles_for_pg.rs:24:61
-   |
-24 |     users::table.filter(users::name.ilike("%hey%")).execute(&mut connection);
-   |                                                     ------- ^^^^^^^^^^^^^^^ the trait `QueryFragment<Mysql>` is not implemented for `diesel::pg::expression::operators::ILike<columns::name, diesel::expression::bound::Bound<diesel::sql_types::Text, &str>>`, which is required by `SelectStatement<FromClause<users::table>, diesel::query_builder::select_clause::DefaultSelectClause<FromClause<users::table>>, diesel::query_builder::distinct_clause::NoDistinctClause, diesel::query_builder::where_clause::WhereClause<diesel::expression::grouped::Grouped<diesel::pg::expression::operators::ILike<columns::name, diesel::expression::bound::Bound<diesel::sql_types::Text, &str>>>>>: ExecuteDsl<_, _>`
-   |                                                     |
-   |                                                     required by a bound introduced by this call
-   |
-   = note: this usually means that the `Mysql` database system does not support
-           this SQL syntax
-   = help: the trait `QueryFragment<Pg>` is implemented for `diesel::pg::expression::operators::ILike<columns::name, diesel::expression::bound::Bound<diesel::sql_types::Text, &str>>`
-   = help: for that trait implementation, expected `Pg`, found `Mysql`
-   = note: required for `diesel::expression::grouped::Grouped<diesel::pg::expression::operators::ILike<columns::name, diesel::expression::bound::Bound<diesel::sql_types::Text, &str>>>` to implement `QueryFragment<Mysql>`
-   = note: 3 redundant requirements hidden
-   = note: required for `SelectStatement<FromClause<users::table>, diesel::query_builder::select_clause::DefaultSelectClause<FromClause<users::table>>, diesel::query_builder::distinct_clause::NoDistinctClause, diesel::query_builder::where_clause::WhereClause<diesel::expression::grouped::Grouped<diesel::pg::expression::operators::ILike<columns::name, diesel::expression::bound::Bound<diesel::sql_types::Text, &str>>>>>` to implement `QueryFragment<Mysql>`
-   = note: required for `SelectStatement<FromClause<users::table>, diesel::query_builder::select_clause::DefaultSelectClause<FromClause<users::table>>, diesel::query_builder::distinct_clause::NoDistinctClause, diesel::query_builder::where_clause::WhereClause<diesel::expression::grouped::Grouped<diesel::pg::expression::operators::ILike<columns::name, diesel::expression::bound::Bound<diesel::sql_types::Text, &str>>>>>` to implement `ExecuteDsl<diesel::MysqlConnection, Mysql>`
+error[E0277]: `ILike<name, Bound<Text, &str>>` is no valid SQL fragment for the `Mysql` backend
+    --> tests/fail/ilike_only_compiles_for_pg.rs:29:18
+     |
+  LL |         .execute(&mut connection);
+     |          ------- ^^^^^^^^^^^^^^^ the trait `QueryFragment<Mysql>` is not implemented for `ILike<name, Bound<Text, &str>>`
+     |          |
+     |          required by a bound introduced by this call
+     |
+     = note: this usually means that the `Mysql` database system does not support 
+             this SQL syntax
+help: the trait `QueryFragment<Mysql, NotSpecialized>` is not implemented for `ILike<name, Bound<Text, &str>>`
+      but trait `QueryFragment<Pg, NotSpecialized>` is implemented for it
+    --> ROOT/diesel/src/expression/operators.rs
+     |
+  LL | / ...   impl<$($ty_param,)+ $($backend_ty_param,)*> $crate::query_builder::QueryFragment<$...
+  LL | | ...       for $name<$($ty_param,)+> where
+  LL | | ...           $($ty_param: $crate::query_builder::QueryFragment<$backend_ty>,)+
+     | |_____________________________________________________________________________^
+     |
+    ::: ROOT/diesel/src/pg/expression/operators.rs
+     |
+  LL |   infix_operator!(ILike, " ILIKE ", backend: Pg);
+     |   ---------------------------------------------- in this macro invocation
+     = help: for that trait implementation, expected `Pg`, found `Mysql`
+     = note: required for `Grouped<ILike<name, Bound<Text, &str>>>` to implement `QueryFragment<Mysql>`
+     = note: 3 redundant requirements hidden
+     = note: required for `SelectStatement<FromClause<table>, _, _, _>` to implement `QueryFragment<Mysql>`
+     = note: required for `SelectStatement<FromClause<table>, _, _, _>` to implement `ExecuteDsl<MysqlLikeConnection<Mysql>, Mysql>`
 note: required by a bound in `diesel::RunQueryDsl::execute`
-  --> $DIESEL/src/query_dsl/mod.rs
-   |
-   |     fn execute(self, conn: &mut Conn) -> QueryResult<usize>
-   |        ------- required by a bound in this associated function
+    --> ROOT/diesel/src/query_dsl/mod.rs
+     |
+LL | pub trait RunQueryDsl<Conn>: Sized {
 ...
-   |         Self: methods::ExecuteDsl<Conn>,
-   |               ^^^^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `RunQueryDsl::execute`
+LL |     fn execute(self, conn: &mut Conn) -> QueryResult<usize>
+...
+LL |         Self: methods::ExecuteDsl<Conn>,
+     |               ^^^^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `RunQueryDsl::execute`
+  
+          = note: this error originates in the macro `$crate::__diesel_operator_body` which comes from the expansion of the macro `infix_operator` (in Nightly builds, run with -Z macro-backtrace for more info)
+For more information about this error, try `rustc --explain E0277`.

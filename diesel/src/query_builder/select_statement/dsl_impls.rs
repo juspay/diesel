@@ -1,3 +1,4 @@
+use super::BoxedCloneSelectStatement;
 use super::BoxedSelectStatement;
 use crate::associations::HasTable;
 use crate::backend::Backend;
@@ -5,41 +6,59 @@ use crate::dsl::AsExprOf;
 use crate::expression::nullable::Nullable;
 use crate::expression::*;
 use crate::insertable::Insertable;
+use crate::query_builder::NoFromClause;
 use crate::query_builder::combination_clause::*;
 use crate::query_builder::distinct_clause::*;
 use crate::query_builder::from_clause::AsQuerySource;
-use crate::query_builder::from_clause::FromClause;
+use crate::query_builder::from_clause::{FromClause, SchemaName};
 use crate::query_builder::group_by_clause::*;
 use crate::query_builder::insert_statement::InsertFromSelect;
 use crate::query_builder::limit_clause::*;
-use crate::query_builder::limit_offset_clause::{BoxedLimitOffsetClause, LimitOffsetClause};
+use crate::query_builder::limit_offset_clause::{
+    BoxedCloneLimitOffsetClause, BoxedLimitOffsetClause, LimitOffsetClause,
+};
 use crate::query_builder::locking_clause::*;
 use crate::query_builder::offset_clause::*;
 use crate::query_builder::order_clause::*;
 use crate::query_builder::select_clause::*;
 use crate::query_builder::update_statement::target::*;
 use crate::query_builder::where_clause::*;
-use crate::query_builder::NoFromClause;
 use crate::query_builder::{
-    AsQuery, IntoBoxedClause, Query, QueryFragment, SelectQuery, SelectStatement,
+    AsQuery, IntoBoxedClause, IntoBoxedCloneClause, Query, QueryFragment, SelectQuery,
+    SelectStatement,
 };
+use crate::query_dsl::group_by_dsl::ValidDistinctForGroupBy;
 use crate::query_dsl::methods::*;
 use crate::query_dsl::order_dsl::ValidOrderingForDistinct;
-use crate::query_dsl::*;
 use crate::query_dsl::schema_name_dsl::SchemaNameDsl;
-use crate::query_source::joins::{Join, JoinOn, JoinTo};
+use crate::query_dsl::*;
 use crate::query_source::QuerySource;
+use crate::query_source::joins::{Join, JoinOn, JoinTo};
 use crate::sql_types::{BigInt, BoolOrNullableBool};
+use alloc::boxed::Box;
+use alloc::string::String;
+use alloc::sync::Arc;
 
-impl<F, D, W, O, LOf, G, H, LC, Rhs, Kind, On> InternalJoinDsl<Rhs, Kind, On>
-    for SelectStatement<FromClause<F>, DefaultSelectClause<FromClause<F>>, D, W, O, LOf, G, H, LC>
+impl<F, Schema, D, W, O, LOf, G, H, LC, Rhs, Kind, On> InternalJoinDsl<Rhs, Kind, On>
+    for SelectStatement<
+        FromClause<F, Schema>,
+        DefaultSelectClause<FromClause<F, Schema>>,
+        D,
+        W,
+        O,
+        LOf,
+        G,
+        H,
+        LC,
+    >
 where
     F: QuerySource,
+    Schema: SchemaName,
     Rhs: QuerySource,
     JoinOn<Join<F, Rhs, Kind>, On>: QuerySource,
     SelectStatement<
-        FromClause<JoinOn<Join<F, Rhs, Kind>, On>>,
-        DefaultSelectClause<FromClause<JoinOn<Join<F, Rhs, Kind>, On>>>,
+        FromClause<JoinOn<Join<F, Rhs, Kind>, On>, Schema>,
+        DefaultSelectClause<FromClause<JoinOn<Join<F, Rhs, Kind>, On>, Schema>>,
         D,
         W,
         O,
@@ -50,8 +69,8 @@ where
     >: AsQuery,
 {
     type Output = SelectStatement<
-        FromClause<JoinOn<Join<F, Rhs, Kind>, On>>,
-        DefaultSelectClause<FromClause<JoinOn<Join<F, Rhs, Kind>, On>>>,
+        FromClause<JoinOn<Join<F, Rhs, Kind>, On>, Schema>,
+        DefaultSelectClause<FromClause<JoinOn<Join<F, Rhs, Kind>, On>, Schema>>,
         D,
         W,
         O,
@@ -62,7 +81,9 @@ where
     >;
 
     fn join(self, rhs: Rhs, kind: Kind, on: On) -> Self::Output {
-        let from = FromClause::new(Join::new(self.from.source, rhs, kind).on(on));
+        let from = self
+            .from
+            .map_source(|source| Join::new(source, rhs, kind).on(on));
         SelectStatement::new(
             DefaultSelectClause::new(&from),
             from,
@@ -77,14 +98,14 @@ where
     }
 }
 
-impl<F, S, D, W, O, LOf, G, H, LC, Rhs, Kind, On> InternalJoinDsl<Rhs, Kind, On>
-    for SelectStatement<FromClause<F>, SelectClause<S>, D, W, O, LOf, G, H, LC>
+impl<F, Schema, S, D, W, O, LOf, G, H, LC, Rhs, Kind, On> InternalJoinDsl<Rhs, Kind, On>
+    for SelectStatement<FromClause<F, Schema>, SelectClause<S>, D, W, O, LOf, G, H, LC>
 where
     F: QuerySource,
     Rhs: QuerySource,
     JoinOn<Join<F, Rhs, Kind>, On>: QuerySource,
     SelectStatement<
-        FromClause<JoinOn<Join<F, Rhs, Kind>, On>>,
+        FromClause<JoinOn<Join<F, Rhs, Kind>, On>, Schema>,
         SelectClause<S>,
         D,
         W,
@@ -96,7 +117,7 @@ where
     >: AsQuery,
 {
     type Output = SelectStatement<
-        FromClause<JoinOn<Join<F, Rhs, Kind>, On>>,
+        FromClause<JoinOn<Join<F, Rhs, Kind>, On>, Schema>,
         SelectClause<S>,
         D,
         W,
@@ -110,7 +131,8 @@ where
     fn join(self, rhs: Rhs, kind: Kind, on: On) -> Self::Output {
         SelectStatement::new(
             self.select,
-            FromClause::new(Join::new(self.from.source, rhs, kind).on(on)),
+            self.from
+                .map_source(|source| Join::new(source, rhs, kind).on(on)),
             self.distinct,
             self.where_clause,
             self.order,
@@ -122,15 +144,21 @@ where
     }
 }
 
-impl<F, S, D, W, O, LOf, G, H, LC, Selection> SelectDsl<Selection>
-    for SelectStatement<FromClause<F>, S, D, W, O, LOf, G, H, LC>
+impl<F, Schema, S, D, W, O, LOf, G, H, LC, Selection> SelectDsl<Selection>
+    for SelectStatement<FromClause<F, Schema>, S, D, W, O, LOf, G, H, LC>
 where
     G: ValidGroupByClause,
     F: QuerySource,
     Selection: SelectableExpression<F> + ValidGrouping<G::Expressions>,
-    SelectStatement<FromClause<F>, SelectClause<Selection>, D, W, O, LOf, G, H, LC>: SelectQuery,
+    SelectStatement<FromClause<F, Schema>, SelectClause<Selection>, D, W, O, LOf, G, H, LC>:
+        SelectQuery,
+    D: ValidDistinctForGroupBy<Selection, G::Expressions>,
+    O: ValidGrouping<G::Expressions>,
+    <Selection as ValidGrouping<G::Expressions>>::IsAggregate:
+        MixedAggregates<<O as ValidGrouping<G::Expressions>>::IsAggregate>,
 {
-    type Output = SelectStatement<FromClause<F>, SelectClause<Selection>, D, W, O, LOf, G, H, LC>;
+    type Output =
+        SelectStatement<FromClause<F, Schema>, SelectClause<Selection>, D, W, O, LOf, G, H, LC>;
 
     fn select(self, selection: Selection) -> Self::Output {
         SelectStatement::new(
@@ -153,6 +181,7 @@ where
     G: ValidGroupByClause,
     Selection: SelectableExpression<NoFromClause> + ValidGrouping<G::Expressions>,
     SelectStatement<NoFromClause, SelectClause<Selection>, D, W, O, LOf, G, H, LC>: SelectQuery,
+    D: ValidDistinctForGroupBy<Selection, G::Expressions>,
 {
     type Output = SelectStatement<NoFromClause, SelectClause<Selection>, D, W, O, LOf, G, H, LC>;
 
@@ -246,8 +275,8 @@ use crate::expression_methods::EqAll;
 use crate::query_builder::having_clause::{HavingClause, NoHavingClause};
 use crate::query_source::Table;
 
-impl<F, S, D, W, O, LOf, G, H, LC, PK> FindDsl<PK>
-    for SelectStatement<FromClause<F>, S, D, W, O, LOf, G, H, LC>
+impl<F, Schema, S, D, W, O, LOf, G, H, LC, PK> FindDsl<PK>
+    for SelectStatement<FromClause<F, Schema>, S, D, W, O, LOf, G, H, LC>
 where
     F: Table,
     F::PrimaryKey: EqAll<PK>,
@@ -262,54 +291,157 @@ where
 }
 
 // no impls for `NoFromClause` here because order is not really supported there yet
-impl<ST, F, S, D, W, O, LOf, G, H, LC, Expr> OrderDsl<Expr>
-    for SelectStatement<FromClause<F>, S, D, W, O, LOf, G, H, LC>
+
+// Without GROUP BY: validate that SELECT and ORDER BY have matching aggregate nature.
+impl<ST, F, Schema, S, D, W, O, LOf, H, LC, Expr> OrderDsl<Expr>
+    for SelectStatement<FromClause<F, Schema>, S, D, W, O, LOf, NoGroupByClause, H, LC>
 where
     F: QuerySource,
     Expr: AppearsOnTable<F>,
     Self: SelectQuery<SqlType = ST>,
-    SelectStatement<FromClause<F>, S, D, W, OrderClause<Expr>, LOf, G, H, LC>:
+    SelectStatement<FromClause<F, Schema>, S, D, W, OrderClause<Expr>, LOf, NoGroupByClause, H, LC>:
         SelectQuery<SqlType = ST>,
     OrderClause<Expr>: ValidOrderingForDistinct<D>,
+    S: SelectClauseExpression<FromClause<F, Schema>>,
+    Expr: ValidGrouping<()>,
+    S::Selection: ValidGrouping<()>,
+    <S::Selection as ValidGrouping<()>>::IsAggregate:
+        MixedAggregates<<Expr as ValidGrouping<()>>::IsAggregate>,
 {
-    type Output = SelectStatement<FromClause<F>, S, D, W, OrderClause<Expr>, LOf, G, H, LC>;
+    type Output = SelectStatement<
+        FromClause<F, Schema>,
+        S,
+        D,
+        W,
+        OrderClause<Expr>,
+        LOf,
+        NoGroupByClause,
+        H,
+        LC,
+    >;
 
     fn order(self, expr: Expr) -> Self::Output {
-        let order = OrderClause(expr);
-        SelectStatement::new(
-            self.select,
-            self.from,
-            self.distinct,
-            self.where_clause,
-            order,
-            self.limit_offset,
-            self.group_by,
-            self.having,
-            self.locking,
-        )
+        self.map_order(|_| OrderClause(expr))
     }
 }
 
-impl<F, S, D, W, O, LOf, G, H, LC, Expr> ThenOrderDsl<Expr>
-    for SelectStatement<FromClause<F>, S, D, W, OrderClause<O>, LOf, G, H, LC>
+// With GROUP BY: only validate that the ORDER BY expression is valid for the group
+// (grouped column or aggregate). SELECT validity is enforced by the Query impl at
+// execution time, so checking it here would reject valid queries where order_by()
+// is called before select() with a non-trivial GROUP BY.
+impl<ST, F, Schema, S, D, W, O, LOf, GB, H, LC, Expr> OrderDsl<Expr>
+    for SelectStatement<FromClause<F, Schema>, S, D, W, O, LOf, GroupByClause<GB>, H, LC>
 where
     F: QuerySource,
     Expr: AppearsOnTable<F>,
+    Self: SelectQuery<SqlType = ST>,
+    SelectStatement<
+        FromClause<F, Schema>,
+        S,
+        D,
+        W,
+        OrderClause<Expr>,
+        LOf,
+        GroupByClause<GB>,
+        H,
+        LC,
+    >: SelectQuery<SqlType = ST>,
+    OrderClause<Expr>: ValidOrderingForDistinct<D>,
+    Expr: ValidGrouping<GB>,
 {
-    type Output = SelectStatement<FromClause<F>, S, D, W, OrderClause<(O, Expr)>, LOf, G, H, LC>;
+    type Output = SelectStatement<
+        FromClause<F, Schema>,
+        S,
+        D,
+        W,
+        OrderClause<Expr>,
+        LOf,
+        GroupByClause<GB>,
+        H,
+        LC,
+    >;
+
+    fn order(self, expr: Expr) -> Self::Output {
+        self.map_order(|_| OrderClause(expr))
+    }
+}
+
+// Without GROUP BY: validate that SELECT and the new ORDER BY term have matching
+// aggregate nature.
+impl<F, Schema, S, D, W, O, LOf, H, LC, Expr> ThenOrderDsl<Expr>
+    for SelectStatement<FromClause<F, Schema>, S, D, W, OrderClause<O>, LOf, NoGroupByClause, H, LC>
+where
+    F: QuerySource,
+    Expr: AppearsOnTable<F>,
+    S: SelectClauseExpression<FromClause<F, Schema>>,
+    Expr: ValidGrouping<()>,
+    S::Selection: ValidGrouping<()>,
+    <S::Selection as ValidGrouping<()>>::IsAggregate:
+        MixedAggregates<<Expr as ValidGrouping<()>>::IsAggregate>,
+    OrderClause<(O, Expr)>: ValidOrderingForDistinct<D>,
+{
+    type Output = SelectStatement<
+        FromClause<F, Schema>,
+        S,
+        D,
+        W,
+        OrderClause<(O, Expr)>,
+        LOf,
+        NoGroupByClause,
+        H,
+        LC,
+    >;
 
     fn then_order_by(self, expr: Expr) -> Self::Output {
-        SelectStatement::new(
-            self.select,
-            self.from,
-            self.distinct,
-            self.where_clause,
-            OrderClause((self.order.0, expr)),
-            self.limit_offset,
-            self.group_by,
-            self.having,
-            self.locking,
-        )
+        self.map_order(|order| OrderClause((order.0, expr)))
+    }
+}
+
+// With GROUP BY: Validate the whole order expression against the given group by expression
+impl<ST, F, Schema, S, D, W, O, LOf, GB, H, LC, Expr> ThenOrderDsl<Expr>
+    for SelectStatement<
+        FromClause<F, Schema>,
+        S,
+        D,
+        W,
+        OrderClause<O>,
+        LOf,
+        GroupByClause<GB>,
+        H,
+        LC,
+    >
+where
+    F: QuerySource,
+    Expr: AppearsOnTable<F>,
+    Self: SelectQuery<SqlType = ST>,
+    SelectStatement<
+        FromClause<F, Schema>,
+        S,
+        D,
+        W,
+        OrderClause<(O, Expr)>,
+        LOf,
+        GroupByClause<GB>,
+        H,
+        LC,
+    >: SelectQuery<SqlType = ST>,
+    (O, Expr): ValidGrouping<GB>,
+    OrderClause<(O, Expr)>: ValidOrderingForDistinct<D>,
+{
+    type Output = SelectStatement<
+        FromClause<F, Schema>,
+        S,
+        D,
+        W,
+        OrderClause<(O, Expr)>,
+        LOf,
+        GroupByClause<GB>,
+        H,
+        LC,
+    >;
+
+    fn then_order_by(self, expr: Expr) -> Self::Output {
+        self.map_order(|order| OrderClause((order.0, expr)))
     }
 }
 
@@ -463,13 +595,13 @@ impl<F, S, D, W, O, LOf, G, H, LC, LM, Modifier> ModifyLockDsl<Modifier>
     }
 }
 
-impl<'a, F, S, D, W, O, LOf, G, H, DB> BoxedDsl<'a, DB>
-    for SelectStatement<FromClause<F>, S, D, W, O, LOf, G, H>
+impl<'a, F, Schema, S, D, W, O, LOf, G, H, DB> BoxedDsl<'a, DB>
+    for SelectStatement<FromClause<F, Schema>, S, D, W, O, LOf, G, H>
 where
     Self: AsQuery,
     DB: Backend,
     F: QuerySource,
-    S: SelectClauseExpression<FromClause<F>> + QueryFragment<DB> + Send + 'a,
+    S: SelectClauseExpression<FromClause<F, Schema>> + QueryFragment<DB> + Send + 'a,
     S::Selection: ValidGrouping<G::Expressions>,
     D: QueryFragment<DB> + Send + 'a,
     W: Into<BoxedWhereClause<'a, DB>>,
@@ -479,7 +611,7 @@ where
     H: QueryFragment<DB> + Send + 'a,
 {
     type Output =
-        BoxedSelectStatement<'a, S::SelectClauseSqlType, FromClause<F>, DB, G::Expressions>;
+        BoxedSelectStatement<'a, S::SelectClauseSqlType, FromClause<F, Schema>, DB, G::Expressions>;
 
     fn internal_into_boxed(self) -> Self::Output {
         BoxedSelectStatement::new(
@@ -491,6 +623,43 @@ where
             self.limit_offset.into_boxed(),
             self.group_by,
             Box::new(self.having),
+        )
+    }
+}
+
+impl<'a, F, Schema, S, D, W, O, LOf, G, H, DB> BoxedCloneDsl<'a, DB>
+    for SelectStatement<FromClause<F, Schema>, S, D, W, O, LOf, G, H>
+where
+    Self: AsQuery,
+    DB: Backend,
+    F: QuerySource,
+    S: SelectClauseExpression<FromClause<F, Schema>> + QueryFragment<DB> + Send + Sync + 'a,
+    S::Selection: ValidGrouping<G::Expressions>,
+    D: QueryFragment<DB> + Send + Sync + 'a,
+    W: Into<BoxedCloneWhereClause<'a, DB>>,
+    O: Into<Option<Arc<dyn QueryFragment<DB> + Send + Sync + 'a>>>,
+    LOf: IntoBoxedCloneClause<'a, DB, BoxedCloneClause = BoxedCloneLimitOffsetClause<'a, DB>>,
+    G: ValidGroupByClause + QueryFragment<DB> + Send + Sync + 'a,
+    H: QueryFragment<DB> + Send + Sync + 'a,
+{
+    type Output = BoxedCloneSelectStatement<
+        'a,
+        S::SelectClauseSqlType,
+        FromClause<F, Schema>,
+        DB,
+        G::Expressions,
+    >;
+
+    fn internal_into_boxed_clone(self) -> Self::Output {
+        BoxedCloneSelectStatement::new(
+            self.select,
+            self.from,
+            Arc::new(self.distinct),
+            self.where_clause.into(),
+            self.order.into(),
+            self.limit_offset.into_boxed_clone(),
+            self.group_by,
+            Arc::new(self.having),
         )
     }
 }
@@ -526,8 +695,39 @@ where
     }
 }
 
-impl<F, S, D, W, O, LOf, G, H, LC> HasTable
-    for SelectStatement<FromClause<F>, S, D, W, O, LOf, G, H, LC>
+impl<'a, S, D, W, O, LOf, G, H, DB> BoxedCloneDsl<'a, DB>
+    for SelectStatement<NoFromClause, S, D, W, O, LOf, G, H>
+where
+    Self: AsQuery,
+    DB: Backend,
+    S: SelectClauseExpression<NoFromClause> + QueryFragment<DB> + Send + Sync + 'a,
+    S::Selection: ValidGrouping<G::Expressions>,
+    D: QueryFragment<DB> + Send + Sync + 'a,
+    W: Into<BoxedCloneWhereClause<'a, DB>>,
+    O: Into<Option<Arc<dyn QueryFragment<DB> + Send + Sync + 'a>>>,
+    LOf: IntoBoxedCloneClause<'a, DB, BoxedCloneClause = BoxedCloneLimitOffsetClause<'a, DB>>,
+    G: ValidGroupByClause + QueryFragment<DB> + Send + Sync + 'a,
+    H: QueryFragment<DB> + Send + Sync + 'a,
+{
+    type Output =
+        BoxedCloneSelectStatement<'a, S::SelectClauseSqlType, NoFromClause, DB, G::Expressions>;
+
+    fn internal_into_boxed_clone(self) -> Self::Output {
+        BoxedCloneSelectStatement::new_no_from_clause(
+            self.select,
+            self.from,
+            Arc::new(self.distinct),
+            self.where_clause.into(),
+            self.order.into(),
+            self.limit_offset.into_boxed_clone(),
+            self.group_by,
+            Arc::new(self.having),
+        )
+    }
+}
+
+impl<F, Schema, S, D, W, O, LOf, G, H, LC> HasTable
+    for SelectStatement<FromClause<F, Schema>, S, D, W, O, LOf, G, H, LC>
 where
     F: HasTable + QuerySource,
 {
@@ -538,10 +738,16 @@ where
     }
 }
 
-impl<F, W> IntoUpdateTarget
-    for SelectStatement<FromClause<F>, DefaultSelectClause<FromClause<F>>, NoDistinctClause, W>
+impl<F, Schema, W> IntoUpdateTarget
+    for SelectStatement<
+        FromClause<F, Schema>,
+        DefaultSelectClause<FromClause<F, Schema>>,
+        NoDistinctClause,
+        W,
+    >
 where
     F: QuerySource,
+    Schema: SchemaName,
     Self: HasTable,
     W: ValidWhereClause<F>,
 {
@@ -558,8 +764,8 @@ where
 // FIXME: Should we disable joining when `.group_by` has been called? Are there
 // any other query methods where a join no longer has the same semantics as
 // joining on just the table?
-impl<F, S, D, W, O, LOf, G, H, LC, Rhs> JoinTo<Rhs>
-    for SelectStatement<FromClause<F>, S, D, W, O, LOf, G, H, LC>
+impl<F, Schema, S, D, W, O, LOf, G, H, LC, Rhs> JoinTo<Rhs>
+    for SelectStatement<FromClause<F, Schema>, S, D, W, O, LOf, G, H, LC>
 where
     F: JoinTo<Rhs> + QuerySource,
 {
@@ -573,7 +779,7 @@ where
 
 impl<F, S, D, W, O, LOf, G, H, LC> QueryDsl for SelectStatement<F, S, D, W, O, LOf, G, H, LC> {}
 
-impl<F, S, D, W, O, LOf, G, H, LC, Conn> RunQueryDsl<Conn>
+impl<F, S, D, W, O, LOf, G, H, LC> RunQueryDslSupport
     for SelectStatement<F, S, D, W, O, LOf, G, H, LC>
 {
 }
@@ -661,16 +867,24 @@ where
     }
 }
 
-impl<F, S, D, W, O, LOf, G, H, Predicate> HavingDsl<Predicate>
-    for SelectStatement<FromClause<F>, S, D, W, O, LOf, GroupByClause<G>, H>
+impl<F, Schema, S, D, W, O, LOf, G, H, Predicate> HavingDsl<Predicate>
+    for SelectStatement<FromClause<F, Schema>, S, D, W, O, LOf, GroupByClause<G>, H>
 where
     F: QuerySource,
     Predicate: AppearsOnTable<F>,
     Predicate: Expression,
     Predicate::SqlType: BoolOrNullableBool,
 {
-    type Output =
-        SelectStatement<FromClause<F>, S, D, W, O, LOf, GroupByClause<G>, HavingClause<Predicate>>;
+    type Output = SelectStatement<
+        FromClause<F, Schema>,
+        S,
+        D,
+        W,
+        O,
+        LOf,
+        GroupByClause<G>,
+        HavingClause<Predicate>,
+    >;
 
     fn having(self, predicate: Predicate) -> Self::Output {
         SelectStatement::new(
@@ -687,17 +901,61 @@ where
     }
 }
 
-impl<F, S, D, W, O, LOf, G, H> SchemaNameDsl
-    for SelectStatement<FromClause<F>, S, D, W, O, LOf, G, H>
+impl<F, PreviousSchema, S, D, W, O, LOf, G, H, LC> SchemaNameDsl
+    for SelectStatement<FromClause<F, PreviousSchema>, SelectClause<S>, D, W, O, LOf, G, H, LC>
 where
-  F: QuerySource,
+    F: QuerySource,
 {
-    type Output = SelectStatement<FromClause<F>, S, D, W, O, LOf, G, H>;
+    type Output = SelectStatement<FromClause<F, String>, SelectClause<S>, D, W, O, LOf, G, H, LC>;
 
-    fn schema_name(self, schema_name: &String) -> Self::Output {
+    fn schema_name(self, schema_name: &str) -> Self::Output {
         SelectStatement::new(
             self.select,
             self.from.set_schema_name(schema_name),
+            self.distinct,
+            self.where_clause,
+            self.order,
+            self.limit_offset,
+            self.group_by,
+            self.having,
+            self.locking,
+        )
+    }
+}
+
+impl<F, PreviousSchema, D, W, O, LOf, G, H, LC> SchemaNameDsl
+    for SelectStatement<
+        FromClause<F, PreviousSchema>,
+        DefaultSelectClause<FromClause<F, PreviousSchema>>,
+        D,
+        W,
+        O,
+        LOf,
+        G,
+        H,
+        LC,
+    >
+where
+    F: QuerySource,
+    PreviousSchema: SchemaName,
+{
+    type Output = SelectStatement<
+        FromClause<F, String>,
+        DefaultSelectClause<FromClause<F, String>>,
+        D,
+        W,
+        O,
+        LOf,
+        G,
+        H,
+        LC,
+    >;
+
+    fn schema_name(self, schema_name: &str) -> Self::Output {
+        let from = self.from.set_schema_name(schema_name);
+        SelectStatement::new(
+            DefaultSelectClause::new(&from),
+            from,
             self.distinct,
             self.where_clause,
             self.order,

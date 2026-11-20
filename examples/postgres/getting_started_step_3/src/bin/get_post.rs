@@ -1,3 +1,4 @@
+#![allow(clippy::print_stdout, reason = "Example code")]
 use self::models::Post;
 use diesel::prelude::*;
 use getting_started_step_3_pg::*;
@@ -22,7 +23,7 @@ fn main() {
 
     match post {
         Ok(Some(post)) => println!("Post with id: {} has a title: {}", post.id, post.title),
-        Ok(None) => println!("Unable to find post {}", post_id),
-        Err(_) => println!("An error occurred while fetching post {}", post_id),
+        Ok(None) => println!("Unable to find post {post_id}"),
+        Err(_) => println!("An error occurred while fetching post {post_id}"),
     }
 }

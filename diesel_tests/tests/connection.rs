@@ -2,12 +2,20 @@ use crate::schema::*;
 use diesel::connection::BoxableConnection;
 use diesel::*;
 
-#[test]
+#[cfg_attr(
+    all(target_family = "wasm", target_os = "unknown"),
+    ignore = "can't sleep"
+)]
+// This test reads query results, which requires reading memory
+// allocated by the native sqlite library. Miri cannot track the
+// provenance of that memory when using `-Zmiri-native-lib`.
+#[cfg(not(miri))]
+#[diesel_test_helper::test]
 #[cfg(any(feature = "postgres", feature = "sqlite"))]
 fn managing_updated_at_for_table() {
     use crate::schema_dsl::*;
     use chrono::NaiveDateTime;
-    use std::{thread, time::Duration};
+    use std::time::Duration;
 
     table! {
         #[sql_name = "auto_time"]
@@ -21,7 +29,7 @@ fn managing_updated_at_for_table() {
 
     // transactions have frozen time, so we can't use them
     let connection = &mut connection_without_transaction();
-    create_table(
+    create_temporary_table(
         "auto_time",
         (
             integer("id").primary_key().auto_increment(),
@@ -31,12 +39,6 @@ fn managing_updated_at_for_table() {
     )
     .execute(connection)
     .unwrap();
-    let mut _drop_conn = connection_without_transaction();
-    let _guard = DropTable {
-        connection: &mut _drop_conn,
-        table_name: "auto_time",
-        can_drop: !cfg!(feature = "sqlite"),
-    };
 
     sql_query("SELECT diesel_manage_updated_at('auto_time')")
         .execute(connection)
@@ -65,8 +67,7 @@ fn managing_updated_at_for_table() {
     assert_eq!(Ok(0), result);
 
     if cfg!(feature = "sqlite") {
-        // SQLite only has second precision
-        thread::sleep(Duration::from_millis(1000));
+        std::thread::sleep(Duration::from_millis(1000));
     }
 
     let query = auto_time.find(2).select(updated_at);
@@ -79,7 +80,11 @@ fn managing_updated_at_for_table() {
     assert!(old_time < new_time);
 }
 
-#[test]
+#[cfg_attr(
+    all(target_family = "wasm", target_os = "unknown"),
+    ignore = "no filesystem on this platform"
+)]
+#[diesel_test_helper::test]
 #[cfg(feature = "sqlite")]
 fn strips_sqlite_url_prefix() {
     let mut path = std::env::temp_dir();
@@ -87,7 +92,10 @@ fn strips_sqlite_url_prefix() {
     assert!(SqliteConnection::establish(&format!("sqlite://{}", path.display())).is_ok());
 }
 
-#[test]
+// This test needs the file system, which is not available under
+// miri with isolation enabled.
+#[cfg(not(miri))]
+#[diesel_test_helper::test]
 #[cfg(feature = "sqlite")]
 fn file_uri_created_in_memory() {
     use std::path::Path;
@@ -97,7 +105,14 @@ fn file_uri_created_in_memory() {
     assert!(!Path::new(":memory:").exists());
 }
 
-#[test]
+#[cfg_attr(
+    all(target_family = "wasm", target_os = "unknown"),
+    ignore = "no filesystem on this platform"
+)]
+// This test needs the file system, which is not available under
+// miri with isolation enabled.
+#[cfg(not(miri))]
+#[diesel_test_helper::test]
 #[cfg(feature = "sqlite")]
 fn sqlite_uri_prefix_interpreted_as_file() {
     let mut path = std::env::temp_dir();
@@ -106,7 +121,11 @@ fn sqlite_uri_prefix_interpreted_as_file() {
     assert!(path.exists());
 }
 
-#[test]
+// This test reads query results, which requires reading memory
+// allocated by the native sqlite library. Miri cannot track the
+// provenance of that memory when using `-Zmiri-native-lib`.
+#[cfg(not(miri))]
+#[diesel_test_helper::test]
 fn boxable_connection_downcast_mut_usable() {
     use crate::schema::users::dsl::*;
 
@@ -118,7 +137,7 @@ fn boxable_connection_downcast_mut_usable() {
     assert_eq!(Ok(String::from("Sean")), sean);
 }
 
-#[test]
+#[diesel_test_helper::test]
 #[cfg(feature = "postgres")]
 fn use_the_same_connection_multiple_times() {
     use crate::*;
@@ -139,7 +158,7 @@ fn use_the_same_connection_multiple_times() {
     // We can extend `schema_dsl` module to accommodate UNIQUE constraint.
     sql_query(
         r#"
-          CREATE TABLE github_issue_3342 (
+          CREATE TEMPORARY TABLE github_issue_3342 (
             id SERIAL PRIMARY KEY,
             uid INTEGER NOT NULL UNIQUE
           )
@@ -147,13 +166,6 @@ fn use_the_same_connection_multiple_times() {
     )
     .execute(connection)
     .unwrap();
-
-    let mut _drop_conn = connection_without_transaction();
-    let _guard = DropTable {
-        connection: &mut _drop_conn,
-        table_name: "github_issue_3342",
-        can_drop: true,
-    };
 
     // helper method to simulate database error.
     fn insert_or_fetch(conn: &mut PgConnection, input: i32) {
@@ -174,7 +186,7 @@ fn use_the_same_connection_multiple_times() {
                     {
                         panic!("The fix didn't solve the problem!?")
                     }
-                    Err(e) => panic!("Caused by: {}", e),
+                    Err(e) => panic!("Caused by: {e}"),
                 }
             }
             Err(DatabaseError(DatabaseErrorKind::UnableToSendCommand, message))
@@ -182,7 +194,7 @@ fn use_the_same_connection_multiple_times() {
             {
                 panic!("The fix didn't solve the problem!?")
             }
-            Err(e) => panic!("Caused by: {}", e),
+            Err(e) => panic!("Caused by: {e}"),
         }
     }
 

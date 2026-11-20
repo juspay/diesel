@@ -12,11 +12,13 @@ pub(crate) mod backend;
 pub(crate) mod connection;
 mod metadata_lookup;
 pub(crate) mod query_builder;
+pub mod returning;
 pub(crate) mod serialize;
 mod transaction;
 mod value;
 
-pub use self::backend::{Pg, PgTypeMetadata};
+#[doc(inline)]
+pub use self::backend::{Pg, PgNotification, PgTypeMetadata};
 #[cfg(feature = "postgres")]
 pub use self::connection::{PgConnection, PgRowByRowLoadingMode};
 #[doc(inline)]
@@ -33,6 +35,8 @@ pub use self::query_builder::{CopyFormat, CopyFromQuery, CopyHeader, CopyTarget,
 pub use self::transaction::TransactionBuilder;
 #[doc(inline)]
 pub use self::value::PgValue;
+#[doc(inline)]
+pub use sqlstate::pg as sql_state;
 
 #[doc(inline)]
 #[cfg(feature = "i-implement-a-third-party-backend-and-opt-into-breaking-changes")]
@@ -55,12 +59,16 @@ pub use crate::upsert;
 /// level types.
 pub mod data_types {
     #[doc(inline)]
+    pub use super::types::array::NdArray;
+    #[doc(inline)]
     pub use super::types::date_and_time::{PgDate, PgInterval, PgTime, PgTimestamp};
     #[doc(inline)]
     pub use super::types::floats::PgNumeric;
     #[doc(inline)]
     pub use super::types::money::PgMoney;
     pub use super::types::money::PgMoney as Cents;
+    #[doc(inline)]
+    pub use super::types::pg_lsn::PgLsn;
 }
 
 #[doc(inline)]

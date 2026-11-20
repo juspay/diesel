@@ -6,8 +6,11 @@ use super::grouped::Grouped;
 use super::select_by::SelectBy;
 use super::{AsExpression, Expression};
 use crate::expression;
+#[cfg(any(feature = "postgres_backend", feature = "__sqlite-shared"))]
+use crate::expression_methods::JsonIndex;
 use crate::expression_methods::PreferredBoolSqlType;
 use crate::sql_types;
+use alloc::string::String;
 
 /// The SQL type of an expression
 pub type SqlTypeOf<Expr> = <Expr as Expression>::SqlType;
@@ -91,6 +94,10 @@ pub type NotBetween<Lhs, Lower, Upper> = Grouped<
 pub type Concat<Lhs, Rhs> = Grouped<super::operators::Concat<Lhs, AsExpr<Rhs, Lhs>>>;
 
 /// The return type of
+/// [`expr.cast<ST>()`](crate::expression_methods::ExpressionMethods::cast())
+pub type Cast<Expr, ST> = super::cast::Cast<Expr, ST>;
+
+/// The return type of
 /// [`expr.desc()`](crate::expression_methods::ExpressionMethods::desc())
 pub type Desc<Expr> = super::operators::Desc<Expr>;
 
@@ -168,6 +175,22 @@ pub type Fields<Alias, Fields> = <Fields as crate::query_source::aliasing::Field
     <Alias as crate::query_source::aliasing::GetAliasSourceFromAlias>::Source,
 >>::Out;
 
+/// The return type of
+/// [`l + r`](expression::ops::numeric::Add)
+pub type Add<L, R> = <L as ::core::ops::Add<R>>::Output;
+
+/// The return type of
+/// [`l - r`](expression::ops::numeric::Sub)
+pub type Sub<L, R> = <L as ::core::ops::Sub<R>>::Output;
+
+/// The return type of
+/// [`l * r`](expression::ops::numeric::Mul)
+pub type Mul<L, R> = <L as ::core::ops::Mul<R>>::Output;
+
+/// The return type of
+/// [`l / r`](expression::ops::numeric::Div)
+pub type Div<L, R> = <L as ::core::ops::Div<R>>::Output;
+
 // we allow unreachable_pub here
 // as rustc otherwise shows false positives
 // for every item in this module. We reexport
@@ -177,11 +200,36 @@ pub type Fields<Alias, Fields> = <Fields as crate::query_source::aliasing::Field
 pub use super::functions::helper_types::*;
 
 #[doc(inline)]
-#[cfg(feature = "postgres_backend")]
+#[cfg(all(feature = "postgres_backend", not(feature = "__sqlite-shared")))]
 #[allow(unreachable_pub)]
 pub use crate::pg::expression::helper_types::*;
 
 #[doc(inline)]
-#[cfg(feature = "sqlite")]
+#[cfg(all(feature = "postgres_backend", feature = "__sqlite-shared"))]
+#[allow(unreachable_pub, ambiguous_glob_reexports)]
+pub use crate::pg::expression::helper_types::*;
+
+#[doc(inline)]
+#[cfg(all(feature = "__sqlite-shared", not(feature = "postgres_backend")))]
+#[allow(unreachable_pub, ambiguous_glob_reexports)]
+pub use crate::sqlite::expression::helper_types::*;
+
+#[doc(inline)]
+#[cfg(all(feature = "__sqlite-shared", feature = "postgres_backend"))]
 #[allow(unreachable_pub)]
 pub use crate::sqlite::expression::helper_types::*;
+
+/// The return type of [`lhs.retrieve_as_text(rhs)`](crate::expression_methods::AnyJsonExpressionMethods::retrieve_as_text)
+#[cfg(any(feature = "postgres_backend", feature = "__sqlite-shared"))]
+pub type RetrieveAsText<Lhs, Rhs> = Grouped<
+    crate::expression::operators::RetrieveAsTextJson<
+        Lhs,
+        AsExprOf<
+            <Rhs as JsonIndex>::Expression,
+            <<Rhs as JsonIndex>::Expression as Expression>::SqlType,
+        >,
+    >,
+>;
+
+/// The return type of [`lhs.collate(collation)`](crate::expression_methods::TextExpressionMethods::collate)
+pub type Collate<Lhs, Col> = Grouped<super::operators::Collate<Lhs, Col>>;

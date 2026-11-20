@@ -1,3 +1,4 @@
+#![allow(clippy::print_stdout)]
 //! Example: columns used in where clause
 //!
 //! To run this:
@@ -36,10 +37,8 @@ fn main() {
         .filter(name.eq("Sean"))
         .load::<(i32, String)>(conn);
 
-    // Print the results.
+    // Confirm the query succeeds without logging row values.
     // The `users` are type `std::result::Result<std::vec::Vec<(i32, std::string::String)>, diesel::result::Error>`
-    let users = users.unwrap();
-    for (user_id, user_name) in users {
-        println!("user id:{} name:{}", user_id, user_name);
-    }
+    let _users = users.unwrap();
+    println!("query completed successfully");
 }

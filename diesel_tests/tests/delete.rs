@@ -1,7 +1,7 @@
 use crate::schema::*;
 use diesel::*;
 
-#[test]
+#[diesel_test_helper::test]
 fn delete_records() {
     use crate::schema::users::dsl::*;
     let connection = &mut connection_with_sean_and_tess_in_users_table();
@@ -15,7 +15,11 @@ fn delete_records() {
     assert_eq!(Ok(1), num_users);
 }
 
-#[test]
+// This test reads query results, which requires reading memory
+// allocated by the native sqlite library. Miri cannot track the
+// provenance of that memory when using `-Zmiri-native-lib`.
+#[cfg(not(miri))]
+#[diesel_test_helper::test]
 fn delete_single_record() {
     use crate::schema::users::dsl::*;
     let connection = &mut connection_with_sean_and_tess_in_users_table();
@@ -28,7 +32,7 @@ fn delete_single_record() {
     assert_eq!(Ok(vec![tess]), users.load(connection));
 }
 
-#[test]
+#[diesel_test_helper::test]
 #[cfg(not(any(
     all(feature = "sqlite", not(feature = "returning_clauses_for_sqlite_3_35")),
     feature = "mysql"
@@ -46,7 +50,7 @@ fn return_deleted_records() {
     assert_eq!(Ok(1), num_users);
 }
 
-#[test]
+#[diesel_test_helper::test]
 fn delete_or_filter() {
     use crate::schema::users::dsl::*;
     let connection = &mut connection_with_sean_and_tess_in_users_table();

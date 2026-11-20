@@ -5,9 +5,21 @@ description: "Test: print_schema_except_custom_type_definitions"
 // @generated automatically by Diesel CLI.
 
 pub mod sql_types {
-    #[derive(diesel::query_builder::QueryId, Clone, diesel::sql_types::SqlType)]
+    #[derive(Clone, diesel::query_builder::QueryId, diesel::sql_types::SqlType)]
     #[diesel(postgres_type(name = "my_type"))]
+    #[diesel(enum_type)]
     pub struct MyType;
+}
+
+pub mod rust_types {
+    #[derive(Clone, Copy, Debug, Eq, PartialEq, diesel::types::Enum)]
+    #[diesel(sql_type = super::sql_types::MyType)]
+    pub enum MyType {
+        #[diesel(rename = "foo")]
+        Foo,
+        #[diesel(rename = "bar")]
+        Bar,
+    }
 }
 
 diesel::table! {

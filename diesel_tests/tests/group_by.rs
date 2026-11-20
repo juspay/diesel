@@ -1,7 +1,7 @@
 use crate::schema::*;
 use diesel::*;
 
-#[test]
+#[diesel_test_helper::test]
 // This test is a shim for a feature which is not sufficiently implemented. It
 // has been added as we have a user who needs a reasonable workaround, but this
 // functionality will change and this test is allowed to change post-1.0
@@ -28,7 +28,7 @@ fn group_by_generates_group_by_sql() {
     assert!(source.execute(conn).is_ok());
 }
 
-#[test]
+#[diesel_test_helper::test]
 fn group_by_mixed_aggregate_column_and_aggregate_function() {
     use diesel::dsl::max;
     let source = users::table
@@ -54,7 +54,7 @@ fn group_by_mixed_aggregate_column_and_aggregate_function() {
     assert!(source.execute(conn).is_ok());
 }
 
-#[test]
+#[diesel_test_helper::test]
 fn boxed_queries_have_group_by_method() {
     let source = users::table
         .group_by(users::name)
@@ -77,7 +77,7 @@ fn boxed_queries_have_group_by_method() {
     assert!(source.execute(conn).is_ok());
 }
 
-#[test]
+#[diesel_test_helper::test]
 fn check_group_by_primary_key_allows_other_columns_in_select_clause() {
     let source = users::table
         .group_by(users::id)
@@ -104,7 +104,7 @@ fn check_group_by_primary_key_allows_other_columns_in_select_clause() {
     assert!(source.execute(conn).is_ok());
 }
 
-#[test]
+#[diesel_test_helper::test]
 fn check_group_by_multiple_columns_in_group_by_clause_single_select() {
     let source = users::table
         .group_by((users::name, users::hair_color))
@@ -131,7 +131,7 @@ fn check_group_by_multiple_columns_in_group_by_clause_single_select() {
     assert!(source.execute(conn).is_ok());
 }
 
-#[test]
+#[diesel_test_helper::test]
 fn check_group_by_multiple_columns_in_group_by_clause_complex_select() {
     let source = users::table
         .group_by((users::name, users::hair_color))
@@ -165,7 +165,7 @@ diesel::allow_columns_to_appear_in_same_group_by_clause!(
     users::name
 );
 
-#[test]
+#[diesel_test_helper::test]
 fn check_group_by_multiple_tables() {
     let source = users::table
         .inner_join(posts::table.inner_join(comments::table))
@@ -197,7 +197,7 @@ fn check_group_by_multiple_tables() {
     assert!(source.execute(conn).is_ok());
 }
 
-#[test]
+#[diesel_test_helper::test]
 fn check_filter_with_group_by_subselect() {
     let subselect = posts::table
         .group_by(posts::user_id)
@@ -240,7 +240,7 @@ fn check_filter_with_group_by_subselect() {
     assert!(source.execute(conn).is_ok());
 }
 
-#[test]
+#[diesel_test_helper::test]
 fn check_filter_with_boxed_group_by_subselect() {
     // this query is identical to `check_filter_with_group_by_subselect`, but the subselect also calls `into_boxed`
     let subselect = posts::table
@@ -283,4 +283,76 @@ fn check_filter_with_boxed_group_by_subselect() {
     let conn = &mut connection();
 
     assert!(source.execute(conn).is_ok());
+}
+
+// This test reads query results, which requires reading memory
+// allocated by the native sqlite library. Miri cannot track the
+// provenance of that memory when using `-Zmiri-native-lib`.
+#[cfg(not(miri))]
+#[diesel_test_helper::test]
+fn select_subselect_referencing_grouped_outer_column() {
+    use diesel::dsl::count_star;
+
+    let conn = &mut connection_with_sean_and_tess_in_users_table();
+    let sean = find_user_by_name("Sean", conn);
+
+    insert_into(posts::table)
+        .values(&vec![
+            sean.new_post("Hello", None),
+            sean.new_post("Hello 2", None),
+        ])
+        .execute(conn)
+        .unwrap();
+
+    let post_counts = users::table
+        .group_by(users::id)
+        .select((
+            users::name,
+            posts::table
+                .filter(posts::user_id.eq(users::id))
+                .select(count_star())
+                .single_value(),
+        ))
+        .order(users::name)
+        .load::<(String, Option<i64>)>(conn);
+
+    assert_eq!(
+        Ok(vec![
+            ("Sean".to_string(), Some(2)),
+            ("Tess".to_string(), Some(0)),
+        ]),
+        post_counts
+    );
+}
+
+// This test reads query results, which requires reading memory
+// allocated by the native sqlite library. Miri cannot track the
+// provenance of that memory when using `-Zmiri-native-lib`.
+#[cfg(not(miri))]
+#[diesel_test_helper::test]
+fn select_exists_with_boxed_subselect_predicate() {
+    use diesel::dsl::exists;
+    use diesel::sql_types::Bool;
+
+    let conn = &mut connection_with_sean_and_tess_in_users_table();
+    let sean = find_user_by_name("Sean", conn);
+
+    insert_into(posts::table)
+        .values(&sean.new_post("Hello", None))
+        .execute(conn)
+        .unwrap();
+
+    let hello: Box<dyn BoxableExpression<posts::table, TestBackend, SqlType = Bool>> =
+        Box::new(posts::title.eq("Hello"));
+    let missing: Box<
+        dyn BoxableExpression<posts::table, TestBackend, SqlType = Bool> + Send + Sync,
+    > = Box::new(posts::title.eq("Missing"));
+
+    let found = diesel::select((
+        exists(posts::table.filter(hello)),
+        exists(posts::table.filter(missing)),
+    ))
+    .get_result::<(bool, bool)>(conn);
+
+    assert_eq!(Ok((true, false)), found);
 }

@@ -1,5 +1,5 @@
-use std::num::NonZeroU32;
-use std::ops::Range;
+use core::num::NonZeroU32;
+use core::ops::Range;
 
 /// Raw postgres value as received from the database
 #[derive(Clone, Copy)]
@@ -22,7 +22,7 @@ pub struct PgValue<'a> {
 /// the implementation for `NonZeroU32` here instead
 /// of providing their own custom implementation
 #[cfg_attr(
-    docsrs,
+    diesel_docsrs,
     doc(cfg(feature = "i-implement-a-third-party-backend-and-opt-into-breaking-changes"))
 )]
 #[allow(unreachable_pub)]
@@ -55,11 +55,7 @@ impl TypeOidLookup for NonZeroU32 {
 impl<'a> PgValue<'a> {
     #[cfg(test)]
     pub(crate) fn for_test(raw_value: &'a [u8]) -> Self {
-        #[allow(unsafe_code)] // that's actual safe
-        static FAKE_OID: NonZeroU32 = unsafe {
-            // 42 != 0, so this is actually safe
-            NonZeroU32::new_unchecked(42)
-        };
+        static FAKE_OID: NonZeroU32 = NonZeroU32::new(42).unwrap();
         Self {
             raw_value,
             type_oid_lookup: &FAKE_OID,
@@ -85,7 +81,7 @@ impl<'a> PgValue<'a> {
     }
 
     /// Get the underlying raw byte representation
-    pub fn as_bytes(&self) -> &[u8] {
+    pub fn as_bytes(&self) -> &'a [u8] {
         self.raw_value
     }
 
@@ -94,10 +90,19 @@ impl<'a> PgValue<'a> {
         self.type_oid_lookup.lookup()
     }
 
-    pub(crate) fn subslice(&self, range: Range<usize>) -> Self {
-        Self {
-            raw_value: &self.raw_value[range],
-            ..*self
+    pub(crate) fn subslice(&self, range: Range<usize>) -> crate::deserialize::Result<Self> {
+        if range.end <= self.raw_value.len() {
+            Ok(Self {
+                raw_value: &self.raw_value[range],
+                ..*self
+            })
+        } else {
+            Err(format!(
+                "Value buffer only contains {} bytes, but requested {} bytes",
+                self.raw_value.len(),
+                range.end
+            )
+            .into())
         }
     }
 }

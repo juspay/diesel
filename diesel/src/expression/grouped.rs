@@ -5,7 +5,8 @@ use crate::result::QueryResult;
 use crate::sql_types::DieselNumericOps;
 
 #[derive(Debug, Copy, Clone, QueryId, Default, DieselNumericOps, ValidGrouping)]
-pub struct Grouped<T>(pub T);
+#[doc(hidden)]
+pub struct Grouped<T>(pub(crate) T);
 
 impl<T: Expression> Expression for Grouped<T> {
     type SqlType = T::SqlType;
@@ -19,6 +20,17 @@ where
     fn walk_ast<'b>(&'b self, mut out: AstPass<'_, 'b, DB>) -> QueryResult<()> {
         out.push_sql("(");
         self.0.walk_ast(out.reborrow())?;
+        out.push_sql(")");
+        Ok(())
+    }
+
+    fn walk_ast_with_schema<'b>(
+        &'b self,
+        schema: &str,
+        mut out: AstPass<'_, 'b, DB>,
+    ) -> QueryResult<()> {
+        out.push_sql("(");
+        self.0.walk_ast_with_schema(schema, out.reborrow())?;
         out.push_sql(")");
         Ok(())
     }

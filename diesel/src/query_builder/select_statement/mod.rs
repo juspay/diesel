@@ -12,12 +12,18 @@
 //! LC: For Update Clause
 
 pub(crate) mod boxed;
+pub(crate) mod boxed_clone;
 mod dsl_impls;
 #[diesel_derives::__diesel_public_if(
     feature = "i-implement-a-third-party-backend-and-opt-into-breaking-changes"
 )]
 pub(crate) use self::boxed::BoxedSelectStatement;
+#[diesel_derives::__diesel_public_if(
+    feature = "i-implement-a-third-party-backend-and-opt-into-breaking-changes"
+)]
+pub(crate) use self::boxed_clone::BoxedCloneSelectStatement;
 
+use super::NoFromClause;
 use super::distinct_clause::NoDistinctClause;
 use super::from_clause::AsQuerySource;
 use super::from_clause::FromClause;
@@ -28,10 +34,9 @@ use super::offset_clause::NoOffsetClause;
 use super::order_clause::NoOrderClause;
 use super::select_clause::*;
 use super::where_clause::*;
-use super::NoFromClause;
 use super::{AstPass, Query, QueryFragment};
-use crate::backend::{sql_dialect, Backend};
-use crate::expression::subselect::ValidSubselect;
+use crate::backend::{Backend, sql_dialect};
+use crate::expression::subselect::{SubselectGroupBy, ValidSubselect, ValidSubselectGrouping};
 use crate::expression::*;
 use crate::query_builder::having_clause::NoHavingClause;
 use crate::query_builder::limit_offset_clause::LimitOffsetClause;
@@ -211,6 +216,24 @@ impl<F, S, D, W, O, LOf, G, H, LC> SelectStatement<F, S, D, W, O, LOf, G, H, LC>
             locking,
         }
     }
+
+    /// The statement with its order clause mapped through `f` and every other clause kept.
+    pub(crate) fn map_order<NewO>(
+        self,
+        f: impl FnOnce(O) -> NewO,
+    ) -> SelectStatement<F, S, D, W, NewO, LOf, G, H, LC> {
+        SelectStatement::new(
+            self.select,
+            self.from,
+            self.distinct,
+            self.where_clause,
+            f(self.order),
+            self.limit_offset,
+            self.group_by,
+            self.having,
+            self.locking,
+        )
+    }
 }
 
 impl<F: QuerySource> SelectStatement<FromClause<F>> {
@@ -296,8 +319,8 @@ where
     }
 }
 
-impl<S, F, D, W, O, LOf, G, H, LC, QS> ValidSubselect<QS>
-    for SelectStatement<FromClause<F>, S, D, W, O, LOf, G, H, LC>
+impl<S, F, Schema, D, W, O, LOf, G, H, LC, QS> ValidSubselect<QS>
+    for SelectStatement<FromClause<F, Schema>, S, D, W, O, LOf, G, H, LC>
 where
     Self: SelectQuery,
     F: QuerySource,
@@ -315,12 +338,12 @@ where
 {
 }
 
-impl<S, F, D, W, O, LOf, G, H, LC> ValidSubselect<NoFromClause>
-    for SelectStatement<FromClause<F>, S, D, W, O, LOf, G, H, LC>
+impl<S, F, Schema, D, W, O, LOf, G, H, LC> ValidSubselect<NoFromClause>
+    for SelectStatement<FromClause<F, Schema>, S, D, W, O, LOf, G, H, LC>
 where
     Self: SelectQuery,
     F: QuerySource,
-    W: ValidWhereClause<FromClause<F>>,
+    W: ValidWhereClause<FromClause<F, Schema>>,
 {
 }
 
@@ -331,6 +354,16 @@ where
     QS: QuerySource,
     W: ValidWhereClause<NoFromClause>,
 {
+}
+
+// SQL lets every clause of a subselect reference the outer query, but diesel only
+// accepts outer columns in the `WHERE` clause, so that is the only clause to check
+impl<F, S, D, W, O, LOf, G, H, LC, GB> ValidSubselectGrouping<GB>
+    for SelectStatement<F, S, D, W, O, LOf, G, H, LC>
+where
+    W: ValidGrouping<SubselectGroupBy<GB, F>>,
+{
+    type IsAggregate = W::IsAggregate;
 }
 
 /// Allow `SelectStatement<From>` to act as if it were `From` as long as
@@ -348,11 +381,11 @@ where
     From: AsQuerySource,
     <From::QuerySource as QuerySource>::DefaultSelection: SelectableExpression<Self>,
 {
-    type FromClause = <From::QuerySource as QuerySource>::FromClause;
+    type FromClause = From::FromClause;
     type DefaultSelection = <From::QuerySource as QuerySource>::DefaultSelection;
 
-    fn from_clause(&self) -> <From::QuerySource as QuerySource>::FromClause {
-        self.from.as_query_source().from_clause()
+    fn from_clause(&self) -> Self::FromClause {
+        AsQuerySource::from_clause(&self.from)
     }
 
     fn default_selection(&self) -> Self::DefaultSelection {

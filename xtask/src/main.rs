@@ -1,8 +1,10 @@
+#![allow(clippy::print_stdout, reason = "Dev tooling")]
 use std::fmt::Display;
 
 use clap::{Parser, ValueEnum};
 
 mod clippy;
+mod semver_checks;
 mod tests;
 mod tidy;
 mod utils;
@@ -22,6 +24,11 @@ enum Commands {
     /// and it will execute `xtask clippy` to verify that the code
     /// compiles without warning
     Tidy(tidy::TidyArgs),
+    /// Check for semver relevant changes
+    ///
+    /// This command will execute `cargo semver-checks` to verify that
+    /// no breaking changes are included
+    SemverChecks(semver_checks::SemverArgs),
 }
 
 impl Commands {
@@ -30,6 +37,7 @@ impl Commands {
             Commands::RunTests(test_args) => test_args.run(),
             Commands::Clippy(clippy) => clippy.run(),
             Commands::Tidy(tidy) => tidy.run(),
+            Commands::SemverChecks(semver) => semver.run(),
         }
     }
 }
@@ -39,11 +47,17 @@ enum Backend {
     Postgres,
     Sqlite,
     Mysql,
+    Mariadb,
     All,
 }
 
 impl Backend {
-    const ALL: &'static [Self] = &[Backend::Postgres, Backend::Sqlite, Backend::Mysql];
+    const ALL: &'static [Self] = &[
+        Backend::Postgres,
+        Backend::Sqlite,
+        Backend::Mysql,
+        Backend::Mariadb,
+    ];
 }
 
 impl Display for Backend {
@@ -52,6 +66,7 @@ impl Display for Backend {
             Backend::Postgres => write!(f, "postgres"),
             Backend::Sqlite => write!(f, "sqlite"),
             Backend::Mysql => write!(f, "mysql"),
+            Backend::Mariadb => write!(f, "mariadb"),
             Backend::All => write!(f, "all"),
         }
     }

@@ -7,7 +7,8 @@ use crate::sql_types::{self, HasSqlType, TypeMetadata};
     not(any(
         feature = "postgres_backend",
         feature = "mysql_backend",
-        feature = "sqlite",
+        feature = "__sqlite-shared",
+        feature = "mariadb_backend",
         feature = "i-implement-a-third-party-backend-and-opt-into-breaking-changes"
     )),
     allow(unused_imports)
@@ -135,7 +136,6 @@ pub type BindCollector<'a, DB> = <DB as Backend>::BindCollector<'a>;
 /// implementations by providing
 /// a custom `QueryFragment<YourBackend, YourSpecialSyntaxType>` implementation
 /// to specialize on generic `QueryFragment<DB, DB::AssociatedType>` implementations.
-///
 #[cfg_attr(
     feature = "i-implement-a-third-party-backend-and-opt-into-breaking-changes",
     doc = "See the [`sql_dialect`] module for options provided by diesel out of the box."
@@ -147,7 +147,7 @@ pub trait SqlDialect: self::private::TrustedBackend {
     /// provide a custom [`QueryFragment`](crate::query_builder::QueryFragment)
     #[cfg_attr(
         feature = "i-implement-a-third-party-backend-and-opt-into-breaking-changes",
-        doc = "implementation for [`ReturningClause`](crate::query_builder::ReturningClause)"
+        doc = "implementation for [`ReturningClause`](crate::query_builder::returning::ReturningClause)"
     )]
     #[cfg_attr(
         not(feature = "i-implement-a-third-party-backend-and-opt-into-breaking-changes"),
@@ -162,7 +162,6 @@ pub trait SqlDialect: self::private::TrustedBackend {
     /// Configures how this backend supports `ON CONFLICT` clauses
     ///
     /// This allows backends to opt in `ON CONFLICT` clause support
-    ///
     #[cfg_attr(
         feature = "i-implement-a-third-party-backend-and-opt-into-breaking-changes",
         doc = "See [`sql_dialect::on_conflict_clause`] for provided default implementations"
@@ -173,7 +172,6 @@ pub trait SqlDialect: self::private::TrustedBackend {
     ///
     /// This allows backends to opt in support for `DEFAULT` value expressions
     /// for insert statements
-    ///
     #[cfg_attr(
         feature = "i-implement-a-third-party-backend-and-opt-into-breaking-changes",
         doc = "See [`sql_dialect::default_keyword_for_insert`] for provided default implementations"
@@ -196,6 +194,23 @@ pub trait SqlDialect: self::private::TrustedBackend {
         doc = "See [`sql_dialect::batch_insert_support`] for provided default implementations"
     )]
     type BatchInsertSupport;
+    /// Configures how this backend handles Batch update statements
+    ///
+    /// This allows backends to provide a custom [`QueryFragment`](crate::query_builder::QueryFragment)
+    #[cfg_attr(
+        feature = "i-implement-a-third-party-backend-and-opt-into-breaking-changes",
+        doc = "implementation for [`BatchUpdate`](crate::query_builder::BatchUpdate)"
+    )]
+    #[cfg_attr(
+        not(feature = "i-implement-a-third-party-backend-and-opt-into-breaking-changes"),
+        doc = "implementation for `BatchUpdate`"
+    )]
+    ///
+    #[cfg_attr(
+        feature = "i-implement-a-third-party-backend-and-opt-into-breaking-changes",
+        doc = "See [`sql_dialect::batch_update_support`] for provided default implementations"
+    )]
+    type BatchUpdateSupport;
     /// Configures how this backend handles the Concat clauses in
     /// select statements.
     ///
@@ -311,12 +326,46 @@ pub trait SqlDialect: self::private::TrustedBackend {
     ///
     /// This allows backends to provide custom [`QueryFragment`](crate::query_builder::QueryFragment)
     /// implementations for [`Alias<T>`](crate::query_source::Alias)
-    ///
     #[cfg_attr(
         feature = "i-implement-a-third-party-backend-and-opt-into-breaking-changes",
         doc = "See [`sql_dialect::alias_syntax`] for provided default implementations"
     )]
     type AliasSyntax;
+
+    /// Configures how this backend support the `GROUP` frame unit for window functions
+    #[cfg_attr(
+        feature = "i-implement-a-third-party-backend-and-opt-into-breaking-changes",
+        doc = "See [`sql_dialect::window_frame_clause_group_support`] for provided default implementations"
+    )]
+    type WindowFrameClauseGroupSupport;
+
+    /// Configures how this backend supports frame exclusion clauses
+    #[cfg_attr(
+        feature = "i-implement-a-third-party-backend-and-opt-into-breaking-changes",
+        doc = "See [`sql_dialect::window_frame_exclusion_support`] for provided default implementations"
+    )]
+    type WindowFrameExclusionSupport;
+
+    /// Configures how this backend supports aggregate function expressions
+    #[cfg_attr(
+        feature = "i-implement-a-third-party-backend-and-opt-into-breaking-changes",
+        doc = "See [`sql_dialect::window_frame_clause_group_support`] for provided default implementations"
+    )]
+    type AggregateFunctionExpressions;
+
+    /// Configures whether built-in window functions require order clauses for this backend or not
+    #[cfg_attr(
+        feature = "i-implement-a-third-party-backend-and-opt-into-breaking-changes",
+        doc = "See [`sql_dialect::built_in_window_function_require_order`] for provided default implementations"
+    )]
+    type BuiltInWindowFunctionRequireOrder;
+
+    /// Configures the notation(s) this backend supports for passing parameters to SQL functions.
+    #[cfg_attr(
+        feature = "i-implement-a-third-party-backend-and-opt-into-breaking-changes",
+        doc = "See [`sql_dialect::sql_function_parameter_notation`] for provided default implementations"
+    )]
+    type SqlFunctionParameterNotation;
 }
 
 /// This module contains all options provided by diesel to configure the [`SqlDialect`] trait.
@@ -446,6 +495,23 @@ pub(crate) mod sql_dialect {
 
         impl SupportsBatchInsert for PostgresLikeBatchInsertSupport {}
     }
+
+    /// This module contains all reusable options to configure
+    /// [`SqlDialect::BatchUpdateSupport`]
+    #[diesel_derives::__diesel_public_if(
+        feature = "i-implement-a-third-party-backend-and-opt-into-breaking-changes"
+    )]
+    pub mod batch_update_support {
+        /// A marker trait indicating if batch update statements
+        /// are supported for this backend or not
+        pub trait SupportsBatchUpdate {}
+
+        /// Indicates that this backend does not support batch
+        /// update statements.
+        #[derive(Debug, Copy, Clone)]
+        pub struct DoesNotSupportBatchUpdate;
+    }
+
     /// This module contains all reusable options to configure
     /// [`SqlDialect::ConcatClause`]
     #[diesel_derives::__diesel_public_if(
@@ -539,6 +605,76 @@ pub(crate) mod sql_dialect {
         #[derive(Debug, Copy, Clone)]
         pub struct AsAliasSyntax;
     }
+
+    /// This module contains all reusable options to configure [`SqlDialect::WindowFrameClauseGroupSupport`]
+    #[diesel_derives::__diesel_public_if(
+        feature = "i-implement-a-third-party-backend-and-opt-into-breaking-changes"
+    )]
+    pub mod window_frame_clause_group_support {
+        /// Indicates that this backend does not support the `GROUPS` frame unit
+        #[derive(Debug, Copy, Clone)]
+        pub struct NoGroupWindowFrameUnit;
+
+        /// Indicates that this backend does support the `GROUPS` frame unit as specified by the standard
+        #[derive(Debug, Copy, Clone)]
+        pub struct IsoGroupWindowFrameUnit;
+    }
+
+    /// This module contains all reusable options to configure [`SqlDialect::AggregateFunctionExpressions`]
+    #[diesel_derives::__diesel_public_if(
+        feature = "i-implement-a-third-party-backend-and-opt-into-breaking-changes"
+    )]
+    pub mod aggregate_function_expressions {
+        /// Indicates that this backend does not support aggregate function expressions
+        #[derive(Debug, Copy, Clone)]
+        pub struct NoAggregateFunctionExpressions;
+
+        /// Indicates that this backend supports aggregate function expressions similar to PostgreSQL
+        #[derive(Debug, Copy, Clone)]
+        pub struct PostgresLikeAggregateFunctionExpressions;
+    }
+
+    /// This module contains all reusable options to configure [`SqlDialect::WindowFrameExclusionSupport`]
+    #[diesel_derives::__diesel_public_if(
+        feature = "i-implement-a-third-party-backend-and-opt-into-breaking-changes"
+    )]
+    pub mod window_frame_exclusion_support {
+        /// Indicates that this backend support frame exclusion clauses
+        /// for window functions
+        #[derive(Debug, Copy, Clone)]
+        pub struct FrameExclusionSupport;
+
+        /// Indicates that this backend does not support frame exclusion clauses
+        /// for window functions
+        #[derive(Debug, Copy, Clone)]
+        pub struct NoFrameFrameExclusionSupport;
+    }
+    /// This module contains all reusable options to configure [`SqlDialect::BuiltInWindowFunctionRequireOrder`]
+    #[diesel_derives::__diesel_public_if(
+        feature = "i-implement-a-third-party-backend-and-opt-into-breaking-changes"
+    )]
+    pub mod built_in_window_function_require_order {
+        /// Indicates that this backend doesn't require any order clause
+        /// for built-in window functions
+        #[derive(Debug, Copy, Clone)]
+        pub struct NoOrderRequired;
+    }
+
+    /// This module contains all reusable options to configure [`SqlDialect::SqlFunctionParameterNotation`]
+    #[diesel_derives::__diesel_public_if(
+        feature = "i-implement-a-third-party-backend-and-opt-into-breaking-changes"
+    )]
+    pub mod sql_function_parameter_notation {
+        /// Indicates that this backend only supports passing parameters to SQL functions by
+        /// position.
+        #[derive(Debug, Copy, Clone)]
+        pub struct PositionalNotationOnly;
+
+        /// Indicates that this backend supports passing parameters to SQL functions either by
+        /// position or by name.
+        #[derive(Debug, Copy, Clone)]
+        pub struct PositionalOrNamedNotation;
+    }
 }
 
 // These traits are not part of the public API
@@ -562,7 +698,7 @@ pub(crate) mod private {
     ///
     /// [`QueryFragment`]: crate::query_builder::QueryFragment
     #[cfg_attr(
-        docsrs,
+        diesel_docsrs,
         doc(cfg(feature = "i-implement-a-third-party-backend-and-opt-into-breaking-changes"))
     )]
     pub trait DieselReserveSpecialization {}
@@ -572,7 +708,7 @@ pub(crate) mod private {
     /// `i-implement-a-third-party-backend-and-opt-into-breaking-changes`
     /// feature flag.
     #[cfg_attr(
-        docsrs,
+        diesel_docsrs,
         doc(cfg(feature = "i-implement-a-third-party-backend-and-opt-into-breaking-changes"))
     )]
     pub trait TrustedBackend {}

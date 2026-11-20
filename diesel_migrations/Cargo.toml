@@ -1,22 +1,22 @@
 [package]
 name = "diesel_migrations"
-version = "2.2.0"
+version = "2.4.0"
 license = "MIT OR Apache-2.0"
 description = "Migration management for diesel"
 documentation = "https://docs.rs/crate/diesel_migrations"
 homepage = "https://diesel.rs"
 repository = "https://github.com/diesel-rs/diesel"
-edition = "2021"
+edition.workspace = true
 include.workspace = true
 rust-version.workspace = true
 categories = ["database"]
 
 [dependencies.migrations_internals]
-version = "~2.2.0"
+version = "~2.4.0"
 path = "migrations_internals"
 
 [dependencies.migrations_macros]
-version = "~2.2.0"
+version = "~2.4.0"
 path = "migrations_macros"
 
 [dev-dependencies]
@@ -25,13 +25,17 @@ cfg-if = "1.0.0"
 tempfile = "3.2"
 
 [dependencies.diesel]
-version = "~2.3.0"
+version = "~2.4.0"
 path = "../diesel"
 package = "juspay_diesel"
 default-features = false
 
 [features]
-default = []
+default = ["diesel/std"]
 sqlite = []
 postgres = []
 mysql = []
+mariadb = []
+
+[lints]
+workspace = true
